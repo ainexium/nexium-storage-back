@@ -1,0 +1,15 @@
+# Environment
+.env
+.env.*
+!.env.example
+
+# Air build artifacts
+tmp/
+
+# Compiled binaries
+seed
+*.exe
+*.out
+
+# macOS
+.DS_Store
