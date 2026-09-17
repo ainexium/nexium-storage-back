@@ -131,7 +131,7 @@ func confirmationEmailHTML(userName, userEmail string, plan *Plan, periodEnd tim
 
 // ── Reminder emails ───────────────────────────────────────────────────────────
 
-func expiryReminderHTML(userName, planName string, daysLeft int, periodEnd time.Time) string {
+func ExpiryReminderHTML(userName, planName string, daysLeft int, periodEnd time.Time) string {
 	fmtDate := func(t time.Time) string {
 		months := []string{"jan", "fév", "mar", "avr", "mai", "jun", "jul", "aoû", "sep", "oct", "nov", "déc"}
 		return fmt.Sprintf("%02d %s %d", t.Day(), months[t.Month()-1], t.Year())
@@ -212,6 +212,94 @@ func pluralS(n int) string {
 		return "s"
 	}
 	return ""
+}
+
+// ── Add-on confirmation ───────────────────────────────────────────────────────
+
+func addonConfirmationHTML(userName, userEmail string, addon *StorageAddon) string {
+	label := addon.PackageID
+	for _, p := range AddonPackages {
+		if p.ID == addon.PackageID {
+			label = p.Label
+			break
+		}
+	}
+	fmtXOF := func(n int) string {
+		s := fmt.Sprintf("%d", n)
+		if len(s) > 3 {
+			s = s[:len(s)-3] + " " + s[len(s)-3:]
+		}
+		return s + " XOF"
+	}
+
+	return fmt.Sprintf(`<!DOCTYPE html>
+<html lang="fr">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f4f4f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+<table width="100%%" cellpadding="0" cellspacing="0" style="background:#f4f4f7;padding:40px 20px;">
+  <tr><td align="center">
+    <table width="100%%" cellpadding="0" cellspacing="0" style="max-width:560px;">
+
+      <tr><td align="center" style="padding-bottom:28px;">
+        <span style="font-size:22px;font-weight:700;color:#007BFF;letter-spacing:-0.5px;">NEXIUM</span>
+        <span style="font-size:14px;color:#999;margin-left:6px;">Storage</span>
+      </td></tr>
+
+      <tr><td style="background:#ffffff;border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,0.07);overflow:hidden;">
+
+        <table width="100%%" cellpadding="0" cellspacing="0">
+          <tr><td style="background:#007BFF;padding:28px 32px;">
+            <p style="margin:0;font-size:13px;color:rgba(255,255,255,0.75);text-transform:uppercase;letter-spacing:1px;">Add-on activé</p>
+            <p style="margin:8px 0 0;font-size:28px;font-weight:700;color:#ffffff;">%s</p>
+            <p style="margin:4px 0 0;font-size:14px;color:rgba(255,255,255,0.8);">%s</p>
+          </td></tr>
+        </table>
+
+        <table width="100%%" cellpadding="0" cellspacing="0" style="padding:32px;">
+          <tr><td>
+            <p style="margin:0 0 8px;font-size:15px;color:#1a1a2e;">Bonjour <strong>%s</strong>,</p>
+            <p style="margin:0 0 28px;font-size:14px;color:#555;line-height:1.6;">
+              Votre espace de stockage a bien été augmenté. Voici le récapitulatif.
+            </p>
+
+            <table width="100%%" cellpadding="0" cellspacing="0" style="border:1px solid #e8e8ed;border-radius:8px;overflow:hidden;margin-bottom:28px;">
+              <tr style="background:#f8f8fb;">
+                <td style="padding:10px 16px;font-size:11px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:0.8px;border-bottom:1px solid #e8e8ed;">Détail</td>
+                <td style="padding:10px 16px;font-size:11px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:0.8px;border-bottom:1px solid #e8e8ed;text-align:right;">Info</td>
+              </tr>
+              <tr>
+                <td style="padding:12px 16px;font-size:13px;color:#444;border-bottom:1px solid #f0f0f5;">Stockage ajouté</td>
+                <td style="padding:12px 16px;font-size:13px;color:#1a1a2e;font-weight:600;text-align:right;border-bottom:1px solid #f0f0f5;">%s</td>
+              </tr>
+              <tr style="background:#f8f8fb;">
+                <td style="padding:12px 16px;font-size:13px;color:#444;">Montant payé</td>
+                <td style="padding:12px 16px;font-size:13px;color:#1a1a2e;font-weight:700;text-align:right;">%s</td>
+              </tr>
+            </table>
+
+            <p style="margin:0;font-size:12px;color:#999;line-height:1.5;">
+              Vous recevez cet email car un paiement a été effectué sur le compte associé à <strong>%s</strong>.
+            </p>
+          </td></tr>
+        </table>
+
+      </td></tr>
+
+      <tr><td align="center" style="padding:24px 0 0;">
+        <p style="margin:0;font-size:12px;color:#aaa;">© %d NEXIUM Storage · Abidjan, Côte d'Ivoire</p>
+      </td></tr>
+
+    </table>
+  </td></tr>
+</table>
+</body>
+</html>`,
+		label, fmtXOF(addon.PriceXOF),
+		userName,
+		fmtStorage(addon.Bytes), fmtXOF(addon.PriceXOF),
+		userEmail,
+		time.Now().Year(),
+	)
 }
 
 // ── PDF receipt ───────────────────────────────────────────────────────────────

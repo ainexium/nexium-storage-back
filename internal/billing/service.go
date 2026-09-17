@@ -404,7 +404,36 @@ func (s *Service) activateAddon(ctx context.Context, addon *StorageAddon) error 
 		return err
 	}
 	total := baseBytes + addonTotal
-	return s.setQuota(ctx, addon.UserID, &total)
+	if err := s.setQuota(ctx, addon.UserID, &total); err != nil {
+		return err
+	}
+	if s.mail != nil && s.getUserInfo != nil {
+		go s.sendAddonEmail(addon)
+	}
+	return nil
+}
+
+func (s *Service) sendAddonEmail(addon *StorageAddon) {
+	ctx := context.Background()
+	name, email, err := s.getUserInfo(ctx, addon.UserID)
+	if err != nil || email == "" {
+		log.Printf("[billing] sendAddonEmail: getUserInfo error user=%s: %v", addon.UserID, err)
+		return
+	}
+	label := addon.PackageID
+	for _, p := range AddonPackages {
+		if p.ID == addon.PackageID {
+			label = p.Label
+			break
+		}
+	}
+	html := addonConfirmationHTML(name, email, addon)
+	if err := s.mail.Send(ctx, email, name,
+		fmt.Sprintf("Votre stockage a été augmenté de %s — NEXIUM Storage", label),
+		html,
+	); err != nil {
+		log.Printf("[billing] sendAddonEmail: send error user=%s: %v", addon.UserID, err)
+	}
 }
 
 func isTerminal(status string) bool {

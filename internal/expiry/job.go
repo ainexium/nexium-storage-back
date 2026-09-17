@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"nexium.ai/api/internal/billing"
 	"nexium.ai/api/internal/mailer"
 	"nexium.ai/api/internal/storage"
 )
@@ -157,7 +158,7 @@ func (j *Job) remindExpiringSubscriptions(ctx context.Context) {
 			subject := fmt.Sprintf("[NEXIUM Storage] Votre abonnement expire dans %d jour%s (%s)",
 				rem.days, pluralS(rem.days), dateStr)
 
-			body := buildReminderEmailHTML(s.name, s.planName, rem.days, s.periodEnd)
+			body := billing.ExpiryReminderHTML(s.name, s.planName, rem.days, s.periodEnd)
 
 			if err := j.mail.Send(ctx, s.email, s.name, subject, body); err != nil {
 				log.Printf("[expiry] remind-%dd email error user=%s: %v", rem.days, s.userID, err)
@@ -178,76 +179,6 @@ func pluralS(n int) string {
 		return "s"
 	}
 	return ""
-}
-
-func buildReminderEmailHTML(name, planName string, daysLeft int, periodEnd time.Time) string {
-	months := []string{"jan", "fév", "mar", "avr", "mai", "jun", "jul", "aoû", "sep", "oct", "nov", "déc"}
-	dateStr := fmt.Sprintf("%02d %s %d", periodEnd.Day(), months[periodEnd.Month()-1], periodEnd.Year())
-
-	bgColor := "#e8f0fe"
-	textColor := "#007BFF"
-	if daysLeft <= 2 {
-		bgColor = "#fee2e2"
-		textColor = "#ef4444"
-	} else if daysLeft <= 5 {
-		bgColor = "#fef3c7"
-		textColor = "#f59e0b"
-	}
-
-	return fmt.Sprintf(`<!DOCTYPE html>
-<html lang="fr">
-<head><meta charset="UTF-8"></head>
-<body style="margin:0;padding:0;background:#f4f4f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-<table width="100%%" cellpadding="0" cellspacing="0" style="background:#f4f4f7;padding:40px 20px;">
-  <tr><td align="center">
-    <table width="100%%" cellpadding="0" cellspacing="0" style="max-width:560px;">
-      <tr><td align="center" style="padding-bottom:24px;">
-        <span style="font-size:22px;font-weight:700;color:#007BFF;">NEXIUM</span>
-        <span style="font-size:14px;color:#999;margin-left:6px;">Storage</span>
-      </td></tr>
-      <tr><td style="background:#ffffff;border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,0.07);overflow:hidden;">
-        <table width="100%%" cellpadding="0" cellspacing="0">
-          <tr><td style="background:%s;padding:10px 28px;">
-            <p style="margin:0;font-size:13px;font-weight:600;color:%s;">
-              Expiration dans <strong>%d jour%s</strong> — %s
-            </p>
-          </td></tr>
-        </table>
-        <table width="100%%" cellpadding="0" cellspacing="0" style="padding:28px 32px;">
-          <tr><td>
-            <p style="margin:0 0 10px;font-size:15px;color:#1a1a2e;">Bonjour <strong>%s</strong>,</p>
-            <p style="margin:0 0 20px;font-size:14px;color:#555;line-height:1.6;">
-              Votre abonnement <strong>%s</strong> expire le <strong>%s</strong>.
-              Sans renouvellement, votre compte repassera sur le plan <strong>Free</strong>
-              (10 GB de stockage, fichiers ≤ 100 MB).
-            </p>
-            <table width="100%%" cellpadding="0" cellspacing="0">
-              <tr><td align="center" style="padding-bottom:20px;">
-                <a href="https://storage.nexium.ai/dashboard/billing"
-                   style="display:inline-block;background:#007BFF;color:#fff;font-size:14px;font-weight:600;
-                          text-decoration:none;padding:12px 28px;border-radius:8px;">
-                  Renouveler mon abonnement
-                </a>
-              </td></tr>
-            </table>
-            <p style="margin:0;font-size:12px;color:#aaa;">
-              Des questions ? Répondez à cet email ou écrivez-nous à support@nexium.ai.
-            </p>
-          </td></tr>
-        </table>
-      </td></tr>
-      <tr><td align="center" style="padding-top:20px;">
-        <p style="margin:0;font-size:12px;color:#bbb;">© %d NEXIUM Storage · Abidjan, Côte d'Ivoire</p>
-      </td></tr>
-    </table>
-  </td></tr>
-</table>
-</body></html>`,
-		bgColor, textColor,
-		daysLeft, pluralS(daysLeft), dateStr,
-		name, planName, dateStr,
-		time.Now().Year(),
-	)
 }
 
 // warnInactiveUsers envoie un email aux users inactifs depuis 90 jours non encore avertis.
