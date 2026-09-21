@@ -244,7 +244,10 @@ func (h *Handler) listLogs(w http.ResponseWriter, r *http.Request) {
 		Limit:  200,
 	}
 	if l := q.Get("limit"); l != "" {
-		if n, err := strconv.Atoi(l); err == nil {
+		if n, err := strconv.Atoi(l); err == nil && n > 0 {
+			if n > 500 {
+				n = 500
+			}
 			filter.Limit = n
 		}
 	}
