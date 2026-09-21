@@ -8,7 +8,12 @@ import (
 )
 
 func Connect(dsn string) *pgxpool.Pool {
-	pool, err := pgxpool.New(context.Background(), dsn)
+	config, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		log.Fatalf("invalid database URL: %v", err)
+	}
+	config.MaxConns = 50
+	pool, err := pgxpool.NewWithConfig(context.Background(), config)
 	if err != nil {
 		log.Fatalf("unable to create connection pool: %v", err)
 	}

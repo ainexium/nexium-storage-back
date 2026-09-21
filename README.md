@@ -21,7 +21,7 @@ Copy `.env.example` to `.env` and fill in your values.
 
 | Variable | Required | Description |
 |---|---|---|
-| `DATABASE_URL` | ✓ | PostgreSQL connection string |
+| `DATABASE_URL` | ✓ | PostgreSQL connection string — local: `postgres://user:pass@localhost:5433/db?sslmode=disable` · prod (Supabase pooler): `postgresql://postgres.[ref]:[pass]@aws-0-xx.pooler.supabase.com:6543/postgres?pgbouncer=true` |
 | `JWT_SECRET` | ✓ | Random secret — `openssl rand -hex 32` |
 | `R2_ACCOUNT_ID` | ✓ | Cloudflare account ID |
 | `R2_ACCESS_KEY_ID` | ✓ | R2 API token key ID |

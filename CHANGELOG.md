@@ -5,6 +5,15 @@ Format: `[version] — date — description`
 
 ---
 
+## [0.6.1] — 2026-09 — Pool de connexions DB
+
+### Changed
+- `pkg/database/postgres.go` — pool de connexions explicitement limité à 50 (`MaxConns = 50`). Auparavant pgxpool utilisait son défaut (~16), ce qui causait une file d'attente dès ~20 requêtes simultanées.
+- `.env.example` — ajout de l'URL de connexion Supabase pooler (port 6543, `?pgbouncer=true`) en commentaire pour la production.
+- `README.md` — documentation de la `DATABASE_URL` locale vs production (Supabase pooler).
+
+---
+
 ## [0.6.0] — 2026-09 — Emails transactionnels & rappels d'expiration
 
 ### Added
