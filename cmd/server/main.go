@@ -42,6 +42,17 @@ func main() {
 		log.Fatalf("migrations failed: %v", err)
 	}
 
+	if email := cfg.SuperAdminEmail; email != "" {
+		if _, err := db.Exec(context.Background(),
+			`UPDATE users SET is_admin=true, is_super_admin=true, is_verified=true WHERE email=$1`,
+			email,
+		); err != nil {
+			log.Printf("[superadmin] promote failed for %s: %v", email, err)
+		} else {
+			log.Printf("[superadmin] promoted: %s", email)
+		}
+	}
+
 	r2 := storage.NewR2Client(cfg)
 	mail := mailer.New(cfg.MailjetAPIKey, cfg.MailjetSecretKey, cfg.MailFrom, cfg.MailFromName)
 
