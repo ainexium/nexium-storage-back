@@ -3,6 +3,7 @@ package response
 import (
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 
 	"nexium.ai/api/pkg/apierr"
@@ -32,5 +33,6 @@ func Error(w http.ResponseWriter, err error) {
 		JSON(w, apiErr.Code, apiErr)
 		return
 	}
+	log.Printf("[500] %v", err)
 	JSON(w, http.StatusInternalServerError, apierr.ErrInternal)
 }
