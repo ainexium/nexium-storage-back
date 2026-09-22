@@ -33,6 +33,9 @@ func (h *Handler) Routes(jwtSecret string) chi.Router {
 		r.Post("/logout", h.logout)
 		r.Get("/me", h.me)
 		r.Patch("/me", h.updateMe)
+		r.Post("/me/email/request", h.requestEmailChange)
+		r.Post("/me/email/confirm", h.confirmEmailChange)
+		r.Delete("/me/email/pending", h.cancelEmailChange)
 	})
 	return r
 }
@@ -181,6 +184,61 @@ func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response.OK(w, user)
+}
+
+func (h *Handler) requestEmailChange(w http.ResponseWriter, r *http.Request) {
+	userID, ok := mw.GetUserID(r)
+	if !ok {
+		response.Error(w, apierr.ErrUnauthorized)
+		return
+	}
+	var req struct {
+		Email string `json:"email"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Email == "" {
+		response.Error(w, apierr.ErrBadRequest("email is required"))
+		return
+	}
+	if err := h.svc.RequestEmailChange(r.Context(), userID, req.Email); err != nil {
+		response.Error(w, err)
+		return
+	}
+	response.OK(w, map[string]string{"message": "verification code sent"})
+}
+
+func (h *Handler) confirmEmailChange(w http.ResponseWriter, r *http.Request) {
+	userID, ok := mw.GetUserID(r)
+	if !ok {
+		response.Error(w, apierr.ErrUnauthorized)
+		return
+	}
+	var req struct {
+		Code string `json:"code"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Code == "" {
+		response.Error(w, apierr.ErrBadRequest("code is required"))
+		return
+	}
+	user, err := h.svc.ConfirmEmailChange(r.Context(), userID, req.Code)
+	if err != nil {
+		response.Error(w, err)
+		return
+	}
+	h.log.Async(userID, "auth.email.changed", "user", userID.String())
+	response.OK(w, user)
+}
+
+func (h *Handler) cancelEmailChange(w http.ResponseWriter, r *http.Request) {
+	userID, ok := mw.GetUserID(r)
+	if !ok {
+		response.Error(w, apierr.ErrUnauthorized)
+		return
+	}
+	if err := h.svc.CancelEmailChange(r.Context(), userID); err != nil {
+		response.Error(w, err)
+		return
+	}
+	response.NoContent(w)
 }
 
 func (h *Handler) updateMe(w http.ResponseWriter, r *http.Request) {

@@ -29,6 +29,9 @@ type Store interface {
 	SetStorageQuota(ctx context.Context, userID uuid.UUID, quotaBytes *int64) error
 	// Activité — réinitialise last_active_at et annule l'avertissement d'inactivité
 	TouchActivity(ctx context.Context, userID uuid.UUID) error
+	// Changement d'email vérifié
+	SetPendingEmail(ctx context.Context, userID uuid.UUID, email string) error
+	ClearPendingEmail(ctx context.Context, userID uuid.UUID) error
 }
 
 type pgStore struct{ db *pgxpool.Pool }
@@ -47,9 +50,9 @@ func (s *pgStore) CreateUser(ctx context.Context, u *User) error {
 func (s *pgStore) GetUserByEmail(ctx context.Context, email string) (*User, error) {
 	u := &User{}
 	err := s.db.QueryRow(ctx,
-		`SELECT id, name, email, password_hash, is_admin, is_super_admin, is_verified, storage_quota_bytes, created_at, updated_at
+		`SELECT id, name, email, password_hash, is_admin, is_super_admin, is_verified, storage_quota_bytes, COALESCE(pending_email,''), created_at, updated_at
 		 FROM users WHERE email = $1`, email,
-	).Scan(&u.ID, &u.Name, &u.Email, &u.PasswordHash, &u.IsAdmin, &u.IsSuperAdmin, &u.IsVerified, &u.storageQuotaBytes, &u.CreatedAt, &u.UpdatedAt)
+	).Scan(&u.ID, &u.Name, &u.Email, &u.PasswordHash, &u.IsAdmin, &u.IsSuperAdmin, &u.IsVerified, &u.storageQuotaBytes, &u.PendingEmail, &u.CreatedAt, &u.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -59,9 +62,9 @@ func (s *pgStore) GetUserByEmail(ctx context.Context, email string) (*User, erro
 func (s *pgStore) GetUserByID(ctx context.Context, id uuid.UUID) (*User, error) {
 	u := &User{}
 	err := s.db.QueryRow(ctx,
-		`SELECT id, name, email, password_hash, is_admin, is_super_admin, is_verified, storage_quota_bytes, created_at, updated_at
+		`SELECT id, name, email, password_hash, is_admin, is_super_admin, is_verified, storage_quota_bytes, COALESCE(pending_email,''), created_at, updated_at
 		 FROM users WHERE id = $1`, id,
-	).Scan(&u.ID, &u.Name, &u.Email, &u.PasswordHash, &u.IsAdmin, &u.IsSuperAdmin, &u.IsVerified, &u.storageQuotaBytes, &u.CreatedAt, &u.UpdatedAt)
+	).Scan(&u.ID, &u.Name, &u.Email, &u.PasswordHash, &u.IsAdmin, &u.IsSuperAdmin, &u.IsVerified, &u.storageQuotaBytes, &u.PendingEmail, &u.CreatedAt, &u.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -172,6 +175,22 @@ func (s *pgStore) SetStorageQuota(ctx context.Context, userID uuid.UUID, quotaBy
 func (s *pgStore) TouchActivity(ctx context.Context, userID uuid.UUID) error {
 	_, err := s.db.Exec(ctx,
 		`UPDATE users SET last_active_at = now(), inactivity_warned_at = NULL WHERE id = $1`,
+		userID,
+	)
+	return err
+}
+
+func (s *pgStore) SetPendingEmail(ctx context.Context, userID uuid.UUID, email string) error {
+	_, err := s.db.Exec(ctx,
+		`UPDATE users SET pending_email = $2, updated_at = now() WHERE id = $1`,
+		userID, email,
+	)
+	return err
+}
+
+func (s *pgStore) ClearPendingEmail(ctx context.Context, userID uuid.UUID) error {
+	_, err := s.db.Exec(ctx,
+		`UPDATE users SET pending_email = NULL, updated_at = now() WHERE id = $1`,
 		userID,
 	)
 	return err

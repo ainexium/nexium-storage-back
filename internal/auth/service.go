@@ -29,6 +29,9 @@ type Service interface {
 	Logout(ctx context.Context, refreshToken string) error
 	Me(ctx context.Context, userID uuid.UUID) (*User, error)
 	UpdateProfile(ctx context.Context, userID uuid.UUID, req *UpdateProfileRequest) (*User, error)
+	RequestEmailChange(ctx context.Context, userID uuid.UUID, newEmail string) error
+	ConfirmEmailChange(ctx context.Context, userID uuid.UUID, code string) (*User, error)
+	CancelEmailChange(ctx context.Context, userID uuid.UUID) error
 	VerifyEmail(ctx context.Context, req *VerifyEmailRequest) (*TokenPair, error)
 	ResendVerification(ctx context.Context, email string) error
 	ForgotPassword(ctx context.Context, email string) error
@@ -160,22 +163,6 @@ func (s *service) UpdateProfile(ctx context.Context, userID uuid.UUID, req *Upda
 	if name == "" {
 		name = user.Name
 	}
-	email := strings.ToLower(strings.TrimSpace(req.Email))
-	if email == "" {
-		email = user.Email
-	}
-	if email != user.Email {
-		if !strings.Contains(email, "@") {
-			return nil, apierr.ErrBadRequest("invalid email")
-		}
-		existing, err := s.store.GetUserByEmail(ctx, email)
-		if err != nil {
-			return nil, err
-		}
-		if existing != nil && existing.ID != userID {
-			return nil, apierr.ErrConflict("email already in use")
-		}
-	}
 
 	passwordHash := user.PasswordHash
 	if req.NewPassword != "" {
@@ -194,12 +181,88 @@ func (s *service) UpdateProfile(ctx context.Context, userID uuid.UUID, req *Upda
 		}
 	}
 
-	if err := s.store.UpdateUser(ctx, userID, name, email, passwordHash); err != nil {
+	if err := s.store.UpdateUser(ctx, userID, name, user.Email, passwordHash); err != nil {
 		return nil, err
 	}
 	user.Name = name
-	user.Email = email
 	return user, nil
+}
+
+func (s *service) RequestEmailChange(ctx context.Context, userID uuid.UUID, newEmail string) error {
+	user, err := s.store.GetUserByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if user == nil {
+		return apierr.ErrNotFound
+	}
+
+	newEmail = strings.ToLower(strings.TrimSpace(newEmail))
+	if !strings.Contains(newEmail, "@") {
+		return apierr.ErrBadRequest("invalid email")
+	}
+	if newEmail == user.Email {
+		return apierr.ErrBadRequest("this is already your current email")
+	}
+
+	existing, err := s.store.GetUserByEmail(ctx, newEmail)
+	if err != nil {
+		return err
+	}
+	if existing != nil {
+		return apierr.ErrConflict("email already in use")
+	}
+
+	if err := s.store.SetPendingEmail(ctx, userID, newEmail); err != nil {
+		return err
+	}
+
+	return s.sendCode(ctx,
+		&User{ID: userID, Email: newEmail, Name: user.Name},
+		"change_email",
+		"Confirm your new email — NEXIUM Storage",
+		changeEmailHTML,
+	)
+}
+
+func (s *service) ConfirmEmailChange(ctx context.Context, userID uuid.UUID, code string) (*User, error) {
+	user, err := s.store.GetUserByID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, apierr.ErrNotFound
+	}
+	if user.PendingEmail == "" {
+		return nil, apierr.ErrBadRequest("no pending email change")
+	}
+
+	codeID, codeHash, err := s.store.GetLatestCode(ctx, userID, "change_email")
+	if err != nil {
+		return nil, err
+	}
+	if codeID == uuid.Nil || hashToken(code) != codeHash {
+		return nil, apierr.ErrBadRequest("invalid or expired code")
+	}
+
+	if err := s.store.MarkCodeUsed(ctx, codeID); err != nil {
+		return nil, err
+	}
+	if err := s.store.UpdateUser(ctx, userID, user.Name, user.PendingEmail, user.PasswordHash); err != nil {
+		return nil, err
+	}
+	if err := s.store.ClearPendingEmail(ctx, userID); err != nil {
+		return nil, err
+	}
+
+	user.Email = user.PendingEmail
+	user.PendingEmail = ""
+	s.applyEffectiveQuota(user)
+	return user, nil
+}
+
+func (s *service) CancelEmailChange(ctx context.Context, userID uuid.UUID) error {
+	return s.store.ClearPendingEmail(ctx, userID)
 }
 
 func (s *service) VerifyEmail(ctx context.Context, req *VerifyEmailRequest) (*TokenPair, error) {
@@ -408,6 +471,17 @@ func verifyEmailHTML(code string) string {
   <p style="color:#999;margin:0 0 20px">Enter this code in the app to confirm your account:</p>
   <div style="background:#0a0a0f;border:1px solid #333;border-radius:12px;padding:28px;text-align:center;font-size:42px;font-weight:700;letter-spacing:14px;font-family:monospace;color:#007BFF">%s</div>
   <p style="color:#666;font-size:12px;margin:24px 0 0">Expires in 15 minutes. If you did not sign up for NEXIUM Storage, ignore this email.</p>
+</div></body></html>`, code)
+}
+
+func changeEmailHTML(code string) string {
+	return fmt.Sprintf(`<!DOCTYPE html><html><body style="margin:0;font-family:sans-serif;background:#0a0a0f;color:#e5e5e5">
+<div style="max-width:480px;margin:40px auto;padding:40px 32px;background:#111118;border-radius:16px;border:1px solid #222">
+  <h2 style="color:#007BFF;margin:0 0 4px">NEXIUM Storage</h2>
+  <h3 style="margin:0 0 24px;color:#fff">Confirm your new email address</h3>
+  <p style="color:#999;margin:0 0 20px">Enter this code to confirm your new email address:</p>
+  <div style="background:#0a0a0f;border:1px solid #333;border-radius:12px;padding:28px;text-align:center;font-size:42px;font-weight:700;letter-spacing:14px;font-family:monospace;color:#007BFF">%s</div>
+  <p style="color:#666;font-size:12px;margin:24px 0 0">Expires in 15 minutes. If you did not request this change, ignore this email.</p>
 </div></body></html>`, code)
 }
 
