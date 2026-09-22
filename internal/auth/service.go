@@ -149,7 +149,10 @@ func (s *service) applyEffectiveQuota(u *User) {
 
 func (s *service) UpdateProfile(ctx context.Context, userID uuid.UUID, req *UpdateProfileRequest) (*User, error) {
 	user, err := s.store.GetUserByID(ctx, userID)
-	if err != nil || user == nil {
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
 		return nil, apierr.ErrNotFound
 	}
 
