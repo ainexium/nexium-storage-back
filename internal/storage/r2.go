@@ -109,6 +109,20 @@ func (r *R2Client) GetObject(ctx context.Context, key string) (io.ReadCloser, st
 	return out.Body, ct, size, nil
 }
 
+func (r *R2Client) GetObjectSize(ctx context.Context, key string) (int64, error) {
+	out, err := r.client.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(r.bucketName),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return 0, err
+	}
+	if out.ContentLength == nil {
+		return 0, nil
+	}
+	return *out.ContentLength, nil
+}
+
 func (r *R2Client) PresignPutURL(ctx context.Context, key string, ttl time.Duration) (string, error) {
 	req, err := r.presigner.PresignPutObject(ctx, &s3.PutObjectInput{
 		Bucket: aws.String(r.bucketName),

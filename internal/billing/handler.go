@@ -187,7 +187,7 @@ func (h *Handler) webhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if h.webhookSecret != "" && !h.verifySignature(body, r.Header.Get("X-Adullam-Signature")) {
+	if h.webhookSecret == "" || !h.verifySignature(body, r.Header.Get("X-Adullam-Signature")) {
 		log.Printf("[billing] webhook: invalid signature")
 		w.WriteHeader(http.StatusUnauthorized)
 		return

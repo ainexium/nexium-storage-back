@@ -33,13 +33,14 @@ Copy `.env.example` to `.env` and fill in your values.
 | `STORAGE_QUOTA_GB` | — | Platform-wide storage quota (default: `10`) |
 | `JWT_ACCESS_TTL` | — | Access token TTL (default: `15m`) |
 | `JWT_REFRESH_TTL` | — | Refresh token TTL (default: `168h`) |
-| `R2_PUBLIC_URL` | — | Public R2 domain (e.g. `https://pub-xxx.r2.dev`) |
+| `CDN_URL` | — | CDN domain for public files (e.g. `https://cdn.nexiumai.io`) — recommended in production |
+| `R2_PUBLIC_URL` | — | Legacy public R2 domain (deprecated — use `CDN_URL`) |
 | `MAILJET_API_KEY` | — | Mailjet API key (transactional emails) |
 | `MAILJET_SECRET_KEY` | — | Mailjet secret key |
 | `MAIL_FROM` | — | Sender email address |
 | `MAIL_FROM_NAME` | — | Sender display name (default: `NEXIUM Storage`) |
 | `ADULLAM_API_KEY` | — | Adullam payment gateway API key |
-| `ADULLAM_WEBHOOK_SECRET` | — | Adullam webhook HMAC secret |
+| `ADULLAM_WEBHOOK_SECRET` | ✓ | Adullam webhook HMAC secret — **required in production** : if unset, all webhook requests are rejected (fail-closed) |
 
 ---
 

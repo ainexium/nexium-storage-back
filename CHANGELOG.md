@@ -5,6 +5,21 @@ Format: `[version] — date — description`
 
 ---
 
+## [0.6.2] — 2026-09 — Corrections de sécurité
+
+### Fixed
+- `internal/files/service.go` — `ConfirmUpload` : l'`objectKey` est maintenant validé contre le préfixe `{bucketID}/{fileID}/` généré par le serveur — empêche un attaquant de pointer vers l'objet R2 d'un autre utilisateur (IDOR)
+- `internal/files/service.go` — `ConfirmUpload` : la taille du fichier est désormais lue depuis R2 via `HeadObject` au lieu d'être acceptée telle que déclarée par le client — empêche le bypass de quota et l'injection de taille fictive
+- `internal/billing/handler.go` — vérification HMAC du webhook Adullam désormais fail-closed : si `ADULLAM_WEBHOOK_SECRET` n'est pas défini, toutes les requêtes sont rejetées (401) au lieu d'être acceptées silencieusement
+- `pkg/middleware/rate_limit.go` — `clientIP()` utilise désormais `CF-Connecting-IP` (posé par Cloudflare, non falsifiable) au lieu de `X-Forwarded-For` spoofable — protège le rate limit des routes auth contre le contournement par IP forgée
+- `internal/auth/service.go` — `ForgotPassword` retourne désormais `nil` si l'email n'existe pas (même comportement que `ResendVerification`) — supprime l'énumération d'utilisateurs
+- `internal/files/handler.go` — les fichiers `image/svg+xml` sont servis avec `Content-Disposition: attachment` sur les routes `/stream` et `/public/files/:id` — empêche l'exécution de scripts embarqués dans un SVG malveillant
+
+### Added
+- `internal/storage/r2.go` — méthode `GetObjectSize` (HeadObject S3) utilisée par `ConfirmUpload` pour récupérer la taille réelle d'un objet R2
+
+---
+
 ## [0.6.1] — 2026-09 — Pool de connexions DB
 
 ### Changed
@@ -109,7 +124,7 @@ Format: `[version] — date — description`
 
 ---
 
-## État actuel — v0.6.0
+## État actuel — v0.6.2
 
 ### Fonctionnel
 - Auth complète (JWT, email verification, reset password)
@@ -123,8 +138,9 @@ Format: `[version] — date — description`
 - Rate limiting
 
 ### Connu / À faire
-- `ADULLAM_WEBHOOK_SECRET` vide en local → vérification HMAC désactivée, à configurer en prod
 - `cmd/seed` : email et mot de passe admin à passer en variables d'env (actuellement hardcodés)
 - CI/CD non configuré — déploiement manuel (`git pull` + `docker compose up`)
 - Bug Wave signalé à Adullam : 60 FCFA prélevés au lieu du montant réel (problème settlement)
 - Renouvellement automatique non implémenté (Mobile Money ne supporte pas les prélèvements récurrents)
+- **Sécurité (plus tard)** — Rate limiter en mémoire : non distribué, inefficace si plusieurs instances. Migration vers Redis nécessaire lors du passage en multi-instance / auto-scaling
+- **Sécurité (plus tard)** — Tokens JWT stockés dans `localStorage` côté frontend : vulnérables en cas de XSS. Migration vers `HttpOnly` cookies (nécessite refactoring backend + frontend)

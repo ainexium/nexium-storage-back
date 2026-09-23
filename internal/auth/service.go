@@ -312,7 +312,7 @@ func (s *service) ForgotPassword(ctx context.Context, email string) error {
 		return err
 	}
 	if user == nil {
-		return apierr.ErrBadRequest("no account found with this email")
+		return nil
 	}
 	return s.sendCode(ctx, user, "reset_password", "Reset your NEXIUM Storage password", resetPasswordHTML)
 }

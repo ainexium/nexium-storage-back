@@ -82,6 +82,9 @@ func (h *Handler) publicDownload(w http.ResponseWriter, r *http.Request) {
 	}
 	defer body.Close()
 	w.Header().Set("Content-Type", contentType)
+	if contentType == "image/svg+xml" {
+		w.Header().Set("Content-Disposition", "attachment")
+	}
 	if size > 0 {
 		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 	}
@@ -109,6 +112,9 @@ func (h *Handler) streamFile(w http.ResponseWriter, r *http.Request) {
 	}
 	defer body.Close()
 	w.Header().Set("Content-Type", contentType)
+	if contentType == "image/svg+xml" {
+		w.Header().Set("Content-Disposition", "attachment")
+	}
 	if size > 0 {
 		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 	}

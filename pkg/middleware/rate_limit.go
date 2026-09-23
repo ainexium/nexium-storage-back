@@ -113,13 +113,11 @@ func RateLimitPerIP(n int, window time.Duration) func(http.Handler) http.Handler
 }
 
 func clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		return strings.TrimSpace(strings.SplitN(xff, ",", 2)[0])
+	// CF-Connecting-IP is set by Cloudflare and cannot be spoofed by the client.
+	if cfIP := r.Header.Get("CF-Connecting-IP"); cfIP != "" {
+		return strings.TrimSpace(cfIP)
 	}
-	if xri := r.Header.Get("X-Real-IP"); xri != "" {
-		return xri
-	}
-	// Strip port from RemoteAddr
+	// Fallback for local dev (no Cloudflare proxy).
 	addr := r.RemoteAddr
 	if i := strings.LastIndex(addr, ":"); i > 0 {
 		return addr[:i]

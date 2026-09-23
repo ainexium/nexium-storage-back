@@ -317,10 +317,20 @@ func (s *service) PresignUpload(ctx context.Context, userID, bucketID uuid.UUID,
 }
 
 func (s *service) ConfirmUpload(ctx context.Context, userID, bucketID, fileID uuid.UUID, objectKey, filename, mimeType string, sizeBytes int64) (*File, error) {
-	if err := s.checkFileSize(ctx, userID, sizeBytes); err != nil {
+	expectedPrefix := fmt.Sprintf("%s/%s/", bucketID, fileID)
+	if !strings.HasPrefix(objectKey, expectedPrefix) {
+		return nil, apierr.ErrBadRequest("invalid object key")
+	}
+	// Get real size from R2 — never trust the client-declared value.
+	// This also confirms the file was actually uploaded before registering it.
+	realSize, err := s.storage.GetObjectSize(ctx, objectKey)
+	if err != nil {
+		return nil, apierr.ErrBadRequest("file not found in storage — upload may have failed")
+	}
+	if err := s.checkFileSize(ctx, userID, realSize); err != nil {
 		return nil, err
 	}
-	if err := s.checkQuota(ctx, userID, sizeBytes); err != nil {
+	if err := s.checkQuota(ctx, userID, realSize); err != nil {
 		return nil, err
 	}
 	ok, isPublic, err := s.checkBucket(ctx, bucketID, userID)
@@ -336,7 +346,7 @@ func (s *service) ConfirmUpload(ctx context.Context, userID, bucketID, fileID uu
 		ObjectKey: objectKey,
 		Filename:  filename,
 		MimeType:  mimeType,
-		SizeBytes: sizeBytes,
+		SizeBytes: realSize,
 		CreatedAt: time.Now().UTC(),
 	}
 	if isPublic {
