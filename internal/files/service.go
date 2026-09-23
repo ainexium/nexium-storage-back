@@ -47,6 +47,7 @@ type service struct {
 	getUserFileSizeLimit GetUserFileSizeLimit
 	isPlatformLocked    IsPlatformLocked
 	appURL              string // base URL de l'API, pour construire les URLs publiques stables
+	cdnURL              string // CDN custom domain, ex: https://cdn.nexiumai.io
 }
 
 func NewService(
@@ -58,6 +59,7 @@ func NewService(
 	getUserFileSizeLimit GetUserFileSizeLimit,
 	isPlatformLocked IsPlatformLocked,
 	appURL string,
+	cdnURL string,
 ) Service {
 	return &service{
 		store:                store,
@@ -68,12 +70,17 @@ func NewService(
 		getUserFileSizeLimit: getUserFileSizeLimit,
 		isPlatformLocked:     isPlatformLocked,
 		appURL:               strings.TrimRight(appURL, "/"),
+		cdnURL:               strings.TrimRight(cdnURL, "/"),
 	}
 }
 
-// publicFileURL construit l'URL publique stable d'un fichier via l'endpoint NEXIUM.
-// Contrairement à R2_PUBLIC_URL, cet endpoint vérifie is_public avant de servir.
-func (s *service) publicFileURL(fileID uuid.UUID) string {
+// publicFileURL construit l'URL publique d'un fichier.
+// Si un CDN est configuré, retourne l'URL CDN directe (cdn.nexiumai.io/<objectKey>).
+// Sinon, retourne l'URL proxy API qui vérifie is_public avant de servir.
+func (s *service) publicFileURL(fileID uuid.UUID, objectKey string) string {
+	if s.cdnURL != "" && objectKey != "" {
+		return s.cdnURL + "/" + objectKey
+	}
 	return s.appURL + "/api/v1/public/files/" + fileID.String()
 }
 
@@ -156,7 +163,7 @@ func (s *service) Upload(ctx context.Context, userID, bucketID uuid.UUID, filena
 		CreatedAt: time.Now().UTC(),
 	}
 	if isPublic {
-		f.URL = s.publicFileURL(fileID)
+		f.URL = s.publicFileURL(fileID, objectKey)
 	}
 	if err := s.store.Create(ctx, f); err != nil {
 		_ = s.storage.Delete(ctx, objectKey)
@@ -195,7 +202,7 @@ func (s *service) List(ctx context.Context, userID, bucketID uuid.UUID, search s
 	}
 	for _, f := range fileList {
 		if f.BucketIsPublic {
-			f.URL = s.publicFileURL(f.ID)
+			f.URL = s.publicFileURL(f.ID, f.ObjectKey)
 		}
 	}
 	return &PagedFiles{Files: fileList, Total: total, Page: page, PerPage: perPage}, nil
@@ -218,7 +225,7 @@ func (s *service) Rename(ctx context.Context, userID, id uuid.UUID, filename str
 	}
 	f.Filename = filename
 	if f.BucketIsPublic {
-		f.URL = s.publicFileURL(f.ID)
+		f.URL = s.publicFileURL(f.ID, f.ObjectKey)
 	}
 	return f, nil
 }
@@ -333,7 +340,7 @@ func (s *service) ConfirmUpload(ctx context.Context, userID, bucketID, fileID uu
 		CreatedAt: time.Now().UTC(),
 	}
 	if isPublic {
-		f.URL = s.publicFileURL(fileID)
+		f.URL = s.publicFileURL(fileID, objectKey)
 	}
 	if err := s.store.Create(ctx, f); err != nil {
 		return nil, err

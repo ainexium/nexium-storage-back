@@ -108,7 +108,7 @@ func main() {
 		files.GetUserFileSizeLimit(func(ctx context.Context, userID uuid.UUID) (int64, error) {
 			return billingSvc.GetUserFileSizeLimit(ctx, userID)
 		}),
-		isPlatformLocked, cfg.AppURL)
+		isPlatformLocked, cfg.AppURL, cfg.CdnURL)
 	apiKeySvc := apikeys.NewService(apiKeyStore)
 	usageSvc := usage.NewService(usageStore)
 	webhookStore := webhooks.NewStore(db)

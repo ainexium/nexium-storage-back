@@ -20,7 +20,8 @@ type Config struct {
 	R2AccessKeyID        string
 	R2SecretKey          string
 	R2BucketName         string
-	R2PublicURL          string // deprecated — ne plus utiliser pour les URLs de fichiers
+	R2PublicURL          string // deprecated — remplacé par CdnURL
+	CdnURL               string // URL publique du CDN, ex: https://cdn.nexiumai.io
 	MaxFileSizeMB        int64
 	StorageQuotaGB       int64
 	MailjetAPIKey        string
@@ -63,6 +64,7 @@ func Load() *Config {
 		R2SecretKey:      mustEnv("R2_SECRET_ACCESS_KEY"),
 		R2BucketName:     mustEnv("R2_BUCKET_NAME"),
 		R2PublicURL:      getEnv("R2_PUBLIC_URL", ""),
+		CdnURL:           getEnv("CDN_URL", ""),
 		MaxFileSizeMB:    maxMB,
 		StorageQuotaGB:   quotaGB,
 		MailjetAPIKey:        getEnv("MAILJET_API_KEY", ""),
