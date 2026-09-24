@@ -32,7 +32,7 @@ func confirmationEmailHTML(userName, userEmail string, plan *Plan, periodEnd tim
 
       <!-- Logo / Header -->
       <tr><td align="center" style="padding-bottom:28px;">
-        <span style="font-size:22px;font-weight:700;color:#007BFF;letter-spacing:-0.5px;">NEXIUM</span>
+        <span style="font-size:22px;font-weight:700;color:#06B6D4;letter-spacing:-0.5px;">NEXIUM</span>
         <span style="font-size:14px;color:#999;margin-left:6px;">Storage</span>
       </td></tr>
 
@@ -41,7 +41,7 @@ func confirmationEmailHTML(userName, userEmail string, plan *Plan, periodEnd tim
 
         <!-- Card header -->
         <table width="100%%" cellpadding="0" cellspacing="0">
-          <tr><td style="background:#007BFF;padding:28px 32px;">
+          <tr><td style="background:#06B6D4;padding:28px 32px;">
             <p style="margin:0;font-size:13px;color:rgba(255,255,255,0.75);text-transform:uppercase;letter-spacing:1px;">Confirmation de paiement</p>
             <p style="margin:8px 0 0;font-size:28px;font-weight:700;color:#ffffff;">%s</p>
             <p style="margin:4px 0 0;font-size:14px;color:rgba(255,255,255,0.8);">%s / mois</p>
@@ -87,7 +87,7 @@ func confirmationEmailHTML(userName, userEmail string, plan *Plan, periodEnd tim
 
             <p style="margin:0 0 6px;font-size:13px;color:#555;line-height:1.6;">
               Le renouvellement <strong>n'est pas automatique</strong>. Pensez à revenir sur votre espace
-              <a href="https://storage.nexium.ai/dashboard/billing" style="color:#007BFF;text-decoration:none;">Billing</a>
+              <a href="https://console.nexiumai.io/dashboard/billing" style="color:#06B6D4;text-decoration:none;">Billing</a>
               avant cette date pour renouveler votre abonnement.
             </p>
           </td></tr>
@@ -143,7 +143,7 @@ func ExpiryReminderHTML(userName, planName string, daysLeft int, periodEnd time.
 		urgency = "warning"
 	}
 	colors := map[string][2]string{
-		"info":    {"#007BFF", "#e8f0fe"},
+		"info":    {"#06B6D4", "#e0f7fa"},
 		"warning": {"#f59e0b", "#fef3c7"},
 		"danger":  {"#ef4444", "#fee2e2"},
 	}
@@ -157,7 +157,7 @@ func ExpiryReminderHTML(userName, planName string, daysLeft int, periodEnd time.
   <tr><td align="center">
     <table width="100%%" cellpadding="0" cellspacing="0" style="max-width:560px;">
       <tr><td align="center" style="padding-bottom:28px;">
-        <span style="font-size:22px;font-weight:700;color:#007BFF;letter-spacing:-0.5px;">NEXIUM</span>
+        <span style="font-size:22px;font-weight:700;color:#06B6D4;letter-spacing:-0.5px;">NEXIUM</span>
         <span style="font-size:14px;color:#999;margin-left:6px;">Storage</span>
       </td></tr>
       <tr><td style="background:#ffffff;border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,0.07);overflow:hidden;">
@@ -178,8 +178,8 @@ func ExpiryReminderHTML(userName, planName string, daysLeft int, periodEnd time.
             </p>
             <table width="100%%" cellpadding="0" cellspacing="0">
               <tr><td align="center" style="padding:8px 0 24px;">
-                <a href="https://storage.nexium.ai/dashboard/billing"
-                   style="display:inline-block;background:#007BFF;color:#ffffff;font-size:14px;font-weight:600;
+                <a href="https://console.nexiumai.io/dashboard/billing"
+                   style="display:inline-block;background:#06B6D4;color:#ffffff;font-size:14px;font-weight:600;
                           text-decoration:none;padding:12px 28px;border-radius:8px;">
                   Renouveler mon abonnement
                 </a>
@@ -241,14 +241,14 @@ func addonConfirmationHTML(userName, userEmail string, addon *StorageAddon) stri
     <table width="100%%" cellpadding="0" cellspacing="0" style="max-width:560px;">
 
       <tr><td align="center" style="padding-bottom:28px;">
-        <span style="font-size:22px;font-weight:700;color:#007BFF;letter-spacing:-0.5px;">NEXIUM</span>
+        <span style="font-size:22px;font-weight:700;color:#06B6D4;letter-spacing:-0.5px;">NEXIUM</span>
         <span style="font-size:14px;color:#999;margin-left:6px;">Storage</span>
       </td></tr>
 
       <tr><td style="background:#ffffff;border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,0.07);overflow:hidden;">
 
         <table width="100%%" cellpadding="0" cellspacing="0">
-          <tr><td style="background:#007BFF;padding:28px 32px;">
+          <tr><td style="background:#06B6D4;padding:28px 32px;">
             <p style="margin:0;font-size:13px;color:rgba(255,255,255,0.75);text-transform:uppercase;letter-spacing:1px;">Add-on activé</p>
             <p style="margin:8px 0 0;font-size:28px;font-weight:700;color:#ffffff;">%s</p>
             <p style="margin:4px 0 0;font-size:14px;color:rgba(255,255,255,0.8);">%s</p>
@@ -320,7 +320,7 @@ func generateReceiptPDF(d receiptData) []byte {
 
 	lines := []pdfLine{
 		{text: "NEXIUM STORAGE", size: 18, bold: true, y: 790},
-		{text: "storage.nexium.ai", size: 10, y: 770},
+		{text: "console.nexiumai.io", size: 10, y: 770},
 		{text: "", y: 750},
 		{text: "RECU DE PAIEMENT", size: 13, bold: true, y: 730},
 		{text: strings.Repeat("-", 60), size: 10, y: 718},
