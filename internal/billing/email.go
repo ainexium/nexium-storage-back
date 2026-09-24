@@ -32,8 +32,9 @@ func confirmationEmailHTML(userName, userEmail string, plan *Plan, periodEnd tim
 
       <!-- Logo / Header -->
       <tr><td align="center" style="padding-bottom:28px;">
-        <span style="font-size:22px;font-weight:700;color:#9b3dff;letter-spacing:-0.5px;">NEXIUM</span>
-        <span style="font-size:14px;color:#999;margin-left:6px;">Storage</span>
+        <img src="https://console.nexiumai.io/email-logo.png" width="24" height="24" alt="" style="display:inline-block;vertical-align:middle;margin-right:7px;">
+        <span style="font-size:22px;font-weight:700;color:#9b3dff;letter-spacing:-0.5px;vertical-align:middle;">NEXIUM</span>
+        <span style="font-size:14px;color:#999;margin-left:6px;vertical-align:middle;">Storage</span>
       </td></tr>
 
       <!-- Card -->
@@ -157,8 +158,9 @@ func ExpiryReminderHTML(userName, planName string, daysLeft int, periodEnd time.
   <tr><td align="center">
     <table width="100%%" cellpadding="0" cellspacing="0" style="max-width:560px;">
       <tr><td align="center" style="padding-bottom:28px;">
-        <span style="font-size:22px;font-weight:700;color:#9b3dff;letter-spacing:-0.5px;">NEXIUM</span>
-        <span style="font-size:14px;color:#999;margin-left:6px;">Storage</span>
+        <img src="https://console.nexiumai.io/email-logo.png" width="24" height="24" alt="" style="display:inline-block;vertical-align:middle;margin-right:7px;">
+        <span style="font-size:22px;font-weight:700;color:#9b3dff;letter-spacing:-0.5px;vertical-align:middle;">NEXIUM</span>
+        <span style="font-size:14px;color:#999;margin-left:6px;vertical-align:middle;">Storage</span>
       </td></tr>
       <tr><td style="background:#ffffff;border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,0.07);overflow:hidden;">
         <table width="100%%" cellpadding="0" cellspacing="0">
@@ -241,8 +243,9 @@ func addonConfirmationHTML(userName, userEmail string, addon *StorageAddon) stri
     <table width="100%%" cellpadding="0" cellspacing="0" style="max-width:560px;">
 
       <tr><td align="center" style="padding-bottom:28px;">
-        <span style="font-size:22px;font-weight:700;color:#9b3dff;letter-spacing:-0.5px;">NEXIUM</span>
-        <span style="font-size:14px;color:#999;margin-left:6px;">Storage</span>
+        <img src="https://console.nexiumai.io/email-logo.png" width="24" height="24" alt="" style="display:inline-block;vertical-align:middle;margin-right:7px;">
+        <span style="font-size:22px;font-weight:700;color:#9b3dff;letter-spacing:-0.5px;vertical-align:middle;">NEXIUM</span>
+        <span style="font-size:14px;color:#999;margin-left:6px;vertical-align:middle;">Storage</span>
       </td></tr>
 
       <tr><td style="background:#ffffff;border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,0.07);overflow:hidden;">
@@ -330,8 +333,9 @@ func GracePeriodReminderHTML(userName, planName string, daysLeft int, graceEnd t
     <table width="100%%" cellpadding="0" cellspacing="0" style="max-width:560px;">
 
       <tr><td align="center" style="padding-bottom:28px;">
-        <span style="font-size:22px;font-weight:700;color:#9b3dff;letter-spacing:-0.5px;">NEXIUM</span>
-        <span style="font-size:14px;color:#999;margin-left:6px;">Storage</span>
+        <img src="https://console.nexiumai.io/email-logo.png" width="24" height="24" alt="" style="display:inline-block;vertical-align:middle;margin-right:7px;">
+        <span style="font-size:22px;font-weight:700;color:#9b3dff;letter-spacing:-0.5px;vertical-align:middle;">NEXIUM</span>
+        <span style="font-size:14px;color:#999;margin-left:6px;vertical-align:middle;">Storage</span>
       </td></tr>
 
       <tr><td style="background:#ffffff;border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,0.07);overflow:hidden;">
@@ -363,7 +367,7 @@ func GracePeriodReminderHTML(userName, planName string, daysLeft int, graceEnd t
               <tr>
                 <td align="center">
                   <a href="https://console.nexiumai.io/dashboard/billing"
-                     style="display:inline-block;background:#06B6D4;color:#ffffff;font-size:14px;font-weight:600;
+                     style="display:inline-block;background:#9b3dff;color:#ffffff;font-size:14px;font-weight:600;
                             text-decoration:none;padding:14px 32px;border-radius:8px;">
                     Renouveler mon abonnement
                   </a>
@@ -373,7 +377,7 @@ func GracePeriodReminderHTML(userName, planName string, daysLeft int, graceEnd t
 
             <p style="margin:0;font-size:12px;color:#999;line-height:1.5;">
               Si vous souhaitez uniquement récupérer vos fichiers avant la suppression, connectez-vous à
-              <a href="https://console.nexiumai.io" style="color:#06B6D4;">console.nexiumai.io</a>
+              <a href="https://console.nexiumai.io" style="color:#9b3dff;">console.nexiumai.io</a>
               et téléchargez vos données.
             </p>
           </td></tr>
@@ -381,7 +385,7 @@ func GracePeriodReminderHTML(userName, planName string, daysLeft int, graceEnd t
 
         <table width="100%%" cellpadding="0" cellspacing="0" style="padding:20px 32px;border-top:1px solid #f0f0f5;">
           <tr><td align="center" style="font-size:11px;color:#bbb;">
-            © %d NEXIUM Storage · <a href="https://console.nexiumai.io/dashboard/billing" style="color:#06B6D4;text-decoration:none;">Gérer mon abonnement</a>
+            © %d NEXIUM Storage · <a href="https://console.nexiumai.io/dashboard/billing" style="color:#9b3dff;text-decoration:none;">Gérer mon abonnement</a>
           </td></tr>
         </table>
 

@@ -68,7 +68,21 @@ func (s *service) Register(ctx context.Context, req *RegisterRequest) (*Verifica
 		return nil, err
 	}
 	if existing != nil {
-		return nil, apierr.ErrConflict("email already registered")
+		if existing.IsVerified {
+			return nil, apierr.ErrConflict("email already registered")
+		}
+		// Account exists but not verified: update credentials and resend code
+		hash, err := hashPassword(req.Password)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.store.UpdateUser(ctx, existing.ID, strings.TrimSpace(req.Name), existing.Email, hash); err != nil {
+			return nil, err
+		}
+		if err := s.sendCode(ctx, existing, "verify_email", "Verify your NEXIUM Storage account", verifyEmailHTML); err != nil {
+			log.Printf("[auth] resend verification failed for %s: %v", existing.Email, err)
+		}
+		return &VerificationSentResponse{Email: existing.Email, Message: "verification code sent"}, nil
 	}
 
 	hash, err := hashPassword(req.Password)
@@ -467,34 +481,76 @@ func generateToken() (string, error) {
 // ─── Email templates ──────────────────────────────────────────────────────────
 
 func verifyEmailHTML(code string) string {
-	return fmt.Sprintf(`<!DOCTYPE html><html><body style="margin:0;font-family:sans-serif;background:#0a0a0f;color:#e5e5e5">
-<div style="max-width:480px;margin:40px auto;padding:40px 32px;background:#111118;border-radius:16px;border:1px solid #222">
-  <h2 style="color:#007BFF;margin:0 0 4px">NEXIUM Storage</h2>
-  <h3 style="margin:0 0 24px;color:#fff">Verify your email address</h3>
-  <p style="color:#999;margin:0 0 20px">Enter this code in the app to confirm your account:</p>
-  <div style="background:#0a0a0f;border:1px solid #333;border-radius:12px;padding:28px;text-align:center;font-size:42px;font-weight:700;letter-spacing:14px;font-family:monospace;color:#007BFF">%s</div>
-  <p style="color:#666;font-size:12px;margin:24px 0 0">Expires in 15 minutes. If you did not sign up for NEXIUM Storage, ignore this email.</p>
-</div></body></html>`, code)
+	return fmt.Sprintf(`<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f4f4f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+<table width="100%%" cellpadding="0" cellspacing="0" style="background:#f4f4f7;padding:40px 20px;">
+  <tr><td align="center">
+    <table width="100%%" cellpadding="0" cellspacing="0" style="max-width:480px;">
+      <tr><td align="center" style="padding-bottom:24px;">
+        <img src="https://console.nexiumai.io/email-logo.png" width="22" height="22" alt="" style="display:inline-block;vertical-align:middle;margin-right:7px;">
+        <span style="font-size:20px;font-weight:700;color:#9b3dff;letter-spacing:-0.5px;vertical-align:middle;">NEXIUM</span>
+        <span style="font-size:13px;color:#999;margin-left:5px;vertical-align:middle;">Storage</span>
+      </td></tr>
+      <tr><td style="background:#ffffff;border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,0.07);padding:32px;">
+        <h3 style="margin:0 0 12px;color:#0f0f14;font-size:18px;">Verify your email address</h3>
+        <p style="color:#666;margin:0 0 24px;font-size:14px;">Enter this code in the app to confirm your account:</p>
+        <div style="background:#f4f4f7;border:1px solid #e5e5e5;border-radius:12px;padding:28px;text-align:center;font-size:42px;font-weight:700;letter-spacing:14px;font-family:monospace;color:#9b3dff;">%s</div>
+        <p style="color:#999;font-size:12px;margin:24px 0 0;">Expires in 15 minutes. If you did not sign up for NEXIUM Storage, ignore this email.</p>
+      </td></tr>
+    </table>
+  </td></tr>
+</table>
+</body></html>`, code)
 }
 
 func changeEmailHTML(code string) string {
-	return fmt.Sprintf(`<!DOCTYPE html><html><body style="margin:0;font-family:sans-serif;background:#0a0a0f;color:#e5e5e5">
-<div style="max-width:480px;margin:40px auto;padding:40px 32px;background:#111118;border-radius:16px;border:1px solid #222">
-  <h2 style="color:#007BFF;margin:0 0 4px">NEXIUM Storage</h2>
-  <h3 style="margin:0 0 24px;color:#fff">Confirm your new email address</h3>
-  <p style="color:#999;margin:0 0 20px">Enter this code to confirm your new email address:</p>
-  <div style="background:#0a0a0f;border:1px solid #333;border-radius:12px;padding:28px;text-align:center;font-size:42px;font-weight:700;letter-spacing:14px;font-family:monospace;color:#007BFF">%s</div>
-  <p style="color:#666;font-size:12px;margin:24px 0 0">Expires in 15 minutes. If you did not request this change, ignore this email.</p>
-</div></body></html>`, code)
+	return fmt.Sprintf(`<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f4f4f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+<table width="100%%" cellpadding="0" cellspacing="0" style="background:#f4f4f7;padding:40px 20px;">
+  <tr><td align="center">
+    <table width="100%%" cellpadding="0" cellspacing="0" style="max-width:480px;">
+      <tr><td align="center" style="padding-bottom:24px;">
+        <img src="https://console.nexiumai.io/email-logo.png" width="22" height="22" alt="" style="display:inline-block;vertical-align:middle;margin-right:7px;">
+        <span style="font-size:20px;font-weight:700;color:#9b3dff;letter-spacing:-0.5px;vertical-align:middle;">NEXIUM</span>
+        <span style="font-size:13px;color:#999;margin-left:5px;vertical-align:middle;">Storage</span>
+      </td></tr>
+      <tr><td style="background:#ffffff;border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,0.07);padding:32px;">
+        <h3 style="margin:0 0 12px;color:#0f0f14;font-size:18px;">Confirm your new email address</h3>
+        <p style="color:#666;margin:0 0 24px;font-size:14px;">Enter this code to confirm your new email address:</p>
+        <div style="background:#f4f4f7;border:1px solid #e5e5e5;border-radius:12px;padding:28px;text-align:center;font-size:42px;font-weight:700;letter-spacing:14px;font-family:monospace;color:#9b3dff;">%s</div>
+        <p style="color:#999;font-size:12px;margin:24px 0 0;">Expires in 15 minutes. If you did not request this change, ignore this email.</p>
+      </td></tr>
+    </table>
+  </td></tr>
+</table>
+</body></html>`, code)
 }
 
 func resetPasswordHTML(code string) string {
-	return fmt.Sprintf(`<!DOCTYPE html><html><body style="margin:0;font-family:sans-serif;background:#0a0a0f;color:#e5e5e5">
-<div style="max-width:480px;margin:40px auto;padding:40px 32px;background:#111118;border-radius:16px;border:1px solid #222">
-  <h2 style="color:#007BFF;margin:0 0 4px">NEXIUM Storage</h2>
-  <h3 style="margin:0 0 24px;color:#fff">Reset your password</h3>
-  <p style="color:#999;margin:0 0 20px">Use this code to reset your password:</p>
-  <div style="background:#0a0a0f;border:1px solid #333;border-radius:12px;padding:28px;text-align:center;font-size:42px;font-weight:700;letter-spacing:14px;font-family:monospace;color:#007BFF">%s</div>
-  <p style="color:#666;font-size:12px;margin:24px 0 0">Expires in 15 minutes. If you did not request a password reset, ignore this email.</p>
-</div></body></html>`, code)
+	return fmt.Sprintf(`<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f4f4f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+<table width="100%%" cellpadding="0" cellspacing="0" style="background:#f4f4f7;padding:40px 20px;">
+  <tr><td align="center">
+    <table width="100%%" cellpadding="0" cellspacing="0" style="max-width:480px;">
+      <tr><td align="center" style="padding-bottom:24px;">
+        <img src="https://console.nexiumai.io/email-logo.png" width="22" height="22" alt="" style="display:inline-block;vertical-align:middle;margin-right:7px;">
+        <span style="font-size:20px;font-weight:700;color:#9b3dff;letter-spacing:-0.5px;vertical-align:middle;">NEXIUM</span>
+        <span style="font-size:13px;color:#999;margin-left:5px;vertical-align:middle;">Storage</span>
+      </td></tr>
+      <tr><td style="background:#ffffff;border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,0.07);padding:32px;">
+        <h3 style="margin:0 0 12px;color:#0f0f14;font-size:18px;">Reset your password</h3>
+        <p style="color:#666;margin:0 0 24px;font-size:14px;">Use this code to reset your password:</p>
+        <div style="background:#f4f4f7;border:1px solid #e5e5e5;border-radius:12px;padding:28px;text-align:center;font-size:42px;font-weight:700;letter-spacing:14px;font-family:monospace;color:#9b3dff;">%s</div>
+        <p style="color:#999;font-size:12px;margin:24px 0 0;">Expires in 15 minutes. If you did not request a password reset, ignore this email.</p>
+      </td></tr>
+    </table>
+  </td></tr>
+</table>
+</body></html>`, code)
 }
