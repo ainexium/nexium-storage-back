@@ -32,7 +32,7 @@ func confirmationEmailHTML(userName, userEmail string, plan *Plan, periodEnd tim
 
       <!-- Logo / Header -->
       <tr><td align="center" style="padding-bottom:28px;">
-        <span style="font-size:22px;font-weight:700;color:#06B6D4;letter-spacing:-0.5px;">NEXIUM</span>
+        <span style="font-size:22px;font-weight:700;color:#9b3dff;letter-spacing:-0.5px;">NEXIUM</span>
         <span style="font-size:14px;color:#999;margin-left:6px;">Storage</span>
       </td></tr>
 
@@ -41,7 +41,7 @@ func confirmationEmailHTML(userName, userEmail string, plan *Plan, periodEnd tim
 
         <!-- Card header -->
         <table width="100%%" cellpadding="0" cellspacing="0">
-          <tr><td style="background:#06B6D4;padding:28px 32px;">
+          <tr><td style="background:#9b3dff;padding:28px 32px;">
             <p style="margin:0;font-size:13px;color:rgba(255,255,255,0.75);text-transform:uppercase;letter-spacing:1px;">Confirmation de paiement</p>
             <p style="margin:8px 0 0;font-size:28px;font-weight:700;color:#ffffff;">%s</p>
             <p style="margin:4px 0 0;font-size:14px;color:rgba(255,255,255,0.8);">%s / mois</p>
@@ -87,7 +87,7 @@ func confirmationEmailHTML(userName, userEmail string, plan *Plan, periodEnd tim
 
             <p style="margin:0 0 6px;font-size:13px;color:#555;line-height:1.6;">
               Le renouvellement <strong>n'est pas automatique</strong>. Pensez à revenir sur votre espace
-              <a href="https://console.nexiumai.io/dashboard/billing" style="color:#06B6D4;text-decoration:none;">Billing</a>
+              <a href="https://console.nexiumai.io/dashboard/billing" style="color:#9b3dff;text-decoration:none;">Billing</a>
               avant cette date pour renouveler votre abonnement.
             </p>
           </td></tr>
@@ -143,7 +143,7 @@ func ExpiryReminderHTML(userName, planName string, daysLeft int, periodEnd time.
 		urgency = "warning"
 	}
 	colors := map[string][2]string{
-		"info":    {"#06B6D4", "#e0f7fa"},
+		"info":    {"#9b3dff", "#f3e8ff"},
 		"warning": {"#f59e0b", "#fef3c7"},
 		"danger":  {"#ef4444", "#fee2e2"},
 	}
@@ -157,7 +157,7 @@ func ExpiryReminderHTML(userName, planName string, daysLeft int, periodEnd time.
   <tr><td align="center">
     <table width="100%%" cellpadding="0" cellspacing="0" style="max-width:560px;">
       <tr><td align="center" style="padding-bottom:28px;">
-        <span style="font-size:22px;font-weight:700;color:#06B6D4;letter-spacing:-0.5px;">NEXIUM</span>
+        <span style="font-size:22px;font-weight:700;color:#9b3dff;letter-spacing:-0.5px;">NEXIUM</span>
         <span style="font-size:14px;color:#999;margin-left:6px;">Storage</span>
       </td></tr>
       <tr><td style="background:#ffffff;border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,0.07);overflow:hidden;">
@@ -179,7 +179,7 @@ func ExpiryReminderHTML(userName, planName string, daysLeft int, periodEnd time.
             <table width="100%%" cellpadding="0" cellspacing="0">
               <tr><td align="center" style="padding:8px 0 24px;">
                 <a href="https://console.nexiumai.io/dashboard/billing"
-                   style="display:inline-block;background:#06B6D4;color:#ffffff;font-size:14px;font-weight:600;
+                   style="display:inline-block;background:#9b3dff;color:#ffffff;font-size:14px;font-weight:600;
                           text-decoration:none;padding:12px 28px;border-radius:8px;">
                   Renouveler mon abonnement
                 </a>
@@ -241,14 +241,14 @@ func addonConfirmationHTML(userName, userEmail string, addon *StorageAddon) stri
     <table width="100%%" cellpadding="0" cellspacing="0" style="max-width:560px;">
 
       <tr><td align="center" style="padding-bottom:28px;">
-        <span style="font-size:22px;font-weight:700;color:#06B6D4;letter-spacing:-0.5px;">NEXIUM</span>
+        <span style="font-size:22px;font-weight:700;color:#9b3dff;letter-spacing:-0.5px;">NEXIUM</span>
         <span style="font-size:14px;color:#999;margin-left:6px;">Storage</span>
       </td></tr>
 
       <tr><td style="background:#ffffff;border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,0.07);overflow:hidden;">
 
         <table width="100%%" cellpadding="0" cellspacing="0">
-          <tr><td style="background:#06B6D4;padding:28px 32px;">
+          <tr><td style="background:#9b3dff;padding:28px 32px;">
             <p style="margin:0;font-size:13px;color:rgba(255,255,255,0.75);text-transform:uppercase;letter-spacing:1px;">Add-on activé</p>
             <p style="margin:8px 0 0;font-size:28px;font-weight:700;color:#ffffff;">%s</p>
             <p style="margin:4px 0 0;font-size:14px;color:rgba(255,255,255,0.8);">%s</p>
@@ -298,6 +298,103 @@ func addonConfirmationHTML(userName, userEmail string, addon *StorageAddon) stri
 		userName,
 		fmtStorage(addon.Bytes), fmtXOF(addon.PriceXOF),
 		userEmail,
+		time.Now().Year(),
+	)
+}
+
+// ── Grace period reminder ─────────────────────────────────────────────────────
+
+// GracePeriodReminderHTML is exported so the expiry job (separate package) can call it.
+func GracePeriodReminderHTML(userName, planName string, daysLeft int, graceEnd time.Time) string {
+	fmtDate := func(t time.Time) string {
+		months := []string{"jan", "fév", "mar", "avr", "mai", "jun", "jul", "aoû", "sep", "oct", "nov", "déc"}
+		return fmt.Sprintf("%02d %s %d", t.Day(), months[t.Month()-1], t.Year())
+	}
+
+	urgency := "#e53935" // rouge par défaut
+	label := "Urgent"
+	if daysLeft >= 15 {
+		urgency = "#f57c00"
+		label = "Important"
+	} else if daysLeft >= 7 {
+		urgency = "#fb8c00"
+		label = "Attention"
+	}
+
+	return fmt.Sprintf(`<!DOCTYPE html>
+<html lang="fr">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f4f4f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+<table width="100%%" cellpadding="0" cellspacing="0" style="background:#f4f4f7;padding:40px 20px;">
+  <tr><td align="center">
+    <table width="100%%" cellpadding="0" cellspacing="0" style="max-width:560px;">
+
+      <tr><td align="center" style="padding-bottom:28px;">
+        <span style="font-size:22px;font-weight:700;color:#9b3dff;letter-spacing:-0.5px;">NEXIUM</span>
+        <span style="font-size:14px;color:#999;margin-left:6px;">Storage</span>
+      </td></tr>
+
+      <tr><td style="background:#ffffff;border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,0.07);overflow:hidden;">
+
+        <table width="100%%" cellpadding="0" cellspacing="0">
+          <tr><td style="background:%s;padding:28px 32px;">
+            <p style="margin:0;font-size:13px;color:rgba(255,255,255,0.8);text-transform:uppercase;letter-spacing:1px;">%s — Suppression de données</p>
+            <p style="margin:8px 0 0;font-size:28px;font-weight:700;color:#ffffff;">%d jour%s restant%s</p>
+            <p style="margin:4px 0 0;font-size:14px;color:rgba(255,255,255,0.85);">Avant suppression de vos fichiers</p>
+          </td></tr>
+        </table>
+
+        <table width="100%%" cellpadding="0" cellspacing="0" style="padding:32px;">
+          <tr><td>
+            <p style="margin:0 0 8px;font-size:15px;color:#1a1a2e;">Bonjour <strong>%s</strong>,</p>
+            <p style="margin:0 0 20px;font-size:14px;color:#555;line-height:1.6;">
+              Votre abonnement <strong>%s</strong> a expiré. Vos fichiers sont actuellement en lecture seule
+              et seront <strong>définitivement supprimés le %s</strong> si vous ne renouvelez pas votre abonnement.
+            </p>
+
+            <table width="100%%" cellpadding="0" cellspacing="0" style="background:#fff3e0;border-left:4px solid %s;border-radius:4px;padding:16px;margin-bottom:24px;">
+              <tr><td style="font-size:13px;color:#bf360c;line-height:1.6;">
+                <strong>Ce qui sera supprimé :</strong> tous vos fichiers, buckets et projets stockés sur NEXIUM Storage.
+                Cette action est <strong>irréversible</strong>.
+              </td></tr>
+            </table>
+
+            <table width="100%%" cellpadding="0" cellspacing="0" style="margin-bottom:28px;">
+              <tr>
+                <td align="center">
+                  <a href="https://console.nexiumai.io/dashboard/billing"
+                     style="display:inline-block;background:#06B6D4;color:#ffffff;font-size:14px;font-weight:600;
+                            text-decoration:none;padding:14px 32px;border-radius:8px;">
+                    Renouveler mon abonnement
+                  </a>
+                </td>
+              </tr>
+            </table>
+
+            <p style="margin:0;font-size:12px;color:#999;line-height:1.5;">
+              Si vous souhaitez uniquement récupérer vos fichiers avant la suppression, connectez-vous à
+              <a href="https://console.nexiumai.io" style="color:#06B6D4;">console.nexiumai.io</a>
+              et téléchargez vos données.
+            </p>
+          </td></tr>
+        </table>
+
+        <table width="100%%" cellpadding="0" cellspacing="0" style="padding:20px 32px;border-top:1px solid #f0f0f5;">
+          <tr><td align="center" style="font-size:11px;color:#bbb;">
+            © %d NEXIUM Storage · <a href="https://console.nexiumai.io/dashboard/billing" style="color:#06B6D4;text-decoration:none;">Gérer mon abonnement</a>
+          </td></tr>
+        </table>
+
+      </td></tr>
+    </table>
+  </td></tr>
+</table>
+</body>
+</html>`,
+		urgency, label,
+		daysLeft, pluralS(daysLeft), pluralS(daysLeft),
+		userName, planName, fmtDate(graceEnd),
+		urgency,
 		time.Now().Year(),
 	)
 }

@@ -104,7 +104,9 @@ func (s *pgStore) GetSubscription(ctx context.Context, userID uuid.UUID) (*Subsc
 
 func (s *pgStore) ExpireSubscription(ctx context.Context, userID uuid.UUID) error {
 	_, err := s.db.Exec(ctx,
-		`UPDATE subscriptions SET status = 'expired', updated_at = now() WHERE user_id = $1 AND status = 'active'`,
+		`UPDATE subscriptions
+		 SET status = 'expired', data_grace_end = now() + interval '30 days', updated_at = now()
+		 WHERE user_id = $1 AND status = 'active'`,
 		userID,
 	)
 	return err
@@ -115,11 +117,15 @@ func (s *pgStore) UpsertSubscription(ctx context.Context, userID, planID uuid.UU
 		`INSERT INTO subscriptions (id, user_id, plan_id, status, current_period_start, current_period_end, created_at, updated_at)
 		 VALUES ($1, $2, $3, $4, now(), $5, now(), now())
 		 ON CONFLICT (user_id) DO UPDATE SET
-		    plan_id              = EXCLUDED.plan_id,
-		    status               = EXCLUDED.status,
-		    current_period_start = now(),
-		    current_period_end   = EXCLUDED.current_period_end,
-		    updated_at           = now()`,
+		    plan_id               = EXCLUDED.plan_id,
+		    status                = EXCLUDED.status,
+		    current_period_start  = now(),
+		    current_period_end    = EXCLUDED.current_period_end,
+		    data_grace_end        = NULL,
+		    grace_reminded_15d_at = NULL,
+		    grace_reminded_7d_at  = NULL,
+		    grace_reminded_1d_at  = NULL,
+		    updated_at            = now()`,
 		uuid.New(), userID, planID, status, periodEnd,
 	)
 	return err

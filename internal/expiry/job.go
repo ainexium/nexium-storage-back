@@ -52,6 +52,8 @@ func (j *Job) run(ctx context.Context) {
 	log.Println("[expiry] running daily check")
 	j.expireSubscriptions(ctx)
 	j.remindExpiringSubscriptions(ctx)
+	j.remindGracePeriodUsers(ctx)
+	j.deleteGracePeriodData(ctx)
 	j.warnInactiveUsers(ctx)
 	j.deleteExpiredFiles(ctx)
 }
@@ -87,7 +89,9 @@ func (j *Job) expireSubscriptions(ctx context.Context) {
 
 	for _, e := range subs {
 		if _, err := j.db.Exec(ctx,
-			`UPDATE subscriptions SET status = 'expired', updated_at = now() WHERE user_id = $1 AND status = 'active'`,
+			`UPDATE subscriptions
+			 SET status = 'expired', data_grace_end = now() + interval '30 days', updated_at = now()
+			 WHERE user_id = $1 AND status = 'active'`,
 			e.userID,
 		); err != nil {
 			log.Printf("[expiry] expire subscription error user=%s: %v", e.userID, err)
@@ -252,6 +256,120 @@ func (j *Job) deleteExpiredFiles(ctx context.Context) {
 		if err := j.deleteUserFiles(ctx, userID); err != nil {
 			log.Printf("[expiry] delete files error user=%s: %v", userID, err)
 		}
+	}
+}
+
+// remindGracePeriodUsers envoie des rappels aux users expirés avant que leurs fichiers soient supprimés.
+func (j *Job) remindGracePeriodUsers(ctx context.Context) {
+	type graceReminder struct {
+		days   int
+		column string
+		window [2]int
+	}
+	reminders := []graceReminder{
+		{days: 15, column: "grace_reminded_15d_at", window: [2]int{14, 16}},
+		{days: 7, column: "grace_reminded_7d_at", window: [2]int{6, 8}},
+		{days: 1, column: "grace_reminded_1d_at", window: [2]int{0, 2}},
+	}
+
+	for _, rem := range reminders {
+		query := fmt.Sprintf(`
+			SELECT s.user_id, u.name, u.email, p.name, s.data_grace_end
+			FROM subscriptions s
+			JOIN users u ON u.id = s.user_id
+			JOIN plans p ON p.id = s.plan_id
+			WHERE s.status = 'expired'
+			  AND s.data_grace_end IS NOT NULL
+			  AND s.data_grace_end BETWEEN now() + interval '%d days' AND now() + interval '%d days'
+			  AND s.%s IS NULL
+		`, rem.window[0], rem.window[1], rem.column)
+
+		rows, err := j.db.Query(ctx, query)
+		if err != nil {
+			log.Printf("[expiry] grace-remind-%dd query error: %v", rem.days, err)
+			continue
+		}
+
+		type entry struct {
+			userID     uuid.UUID
+			name       string
+			email      string
+			planName   string
+			graceEnd   time.Time
+		}
+		var entries []entry
+		for rows.Next() {
+			var e entry
+			if err := rows.Scan(&e.userID, &e.name, &e.email, &e.planName, &e.graceEnd); err == nil {
+				entries = append(entries, e)
+			}
+		}
+		rows.Close()
+
+		for _, e := range entries {
+			months := []string{"jan", "fév", "mar", "avr", "mai", "jun", "jul", "aoû", "sep", "oct", "nov", "déc"}
+			dateStr := fmt.Sprintf("%02d %s %d", e.graceEnd.Day(), months[e.graceEnd.Month()-1], e.graceEnd.Year())
+
+			subject := fmt.Sprintf("[NEXIUM Storage] Vos fichiers seront supprimés dans %d jour%s (%s)",
+				rem.days, pluralS(rem.days), dateStr)
+
+			body := billing.GracePeriodReminderHTML(e.name, e.planName, rem.days, e.graceEnd)
+
+			if err := j.mail.Send(ctx, e.email, e.name, subject, body); err != nil {
+				log.Printf("[expiry] grace-remind-%dd email error user=%s: %v", rem.days, e.userID, err)
+				continue
+			}
+
+			j.db.Exec(ctx,
+				fmt.Sprintf(`UPDATE subscriptions SET %s = now() WHERE user_id = $1`, rem.column),
+				e.userID,
+			)
+			log.Printf("[expiry] sent grace-%dd reminder user=%s", rem.days, e.userID)
+		}
+	}
+}
+
+// deleteGracePeriodData supprime tous les fichiers des users dont la grace period est écoulée.
+func (j *Job) deleteGracePeriodData(ctx context.Context) {
+	rows, err := j.db.Query(ctx, `
+		SELECT s.user_id, u.name, u.email
+		FROM subscriptions s
+		JOIN users u ON u.id = s.user_id
+		WHERE s.status = 'expired'
+		  AND s.data_grace_end IS NOT NULL
+		  AND s.data_grace_end < now()
+	`)
+	if err != nil {
+		log.Printf("[expiry] grace delete query error: %v", err)
+		return
+	}
+	defer rows.Close()
+
+	type entry struct {
+		userID uuid.UUID
+		name   string
+		email  string
+	}
+	var entries []entry
+	for rows.Next() {
+		var e entry
+		if err := rows.Scan(&e.userID, &e.name, &e.email); err == nil {
+			entries = append(entries, e)
+		}
+	}
+	rows.Close()
+
+	for _, e := range entries {
+		if err := j.deleteUserFiles(ctx, e.userID); err != nil {
+			log.Printf("[expiry] grace delete files error user=%s: %v", e.userID, err)
+			continue
+		}
+		// Clear data_grace_end to avoid re-processing
+		j.db.Exec(ctx,
+			`UPDATE subscriptions SET data_grace_end = NULL, updated_at = now() WHERE user_id = $1`,
+			e.userID,
+		)
+		log.Printf("[expiry] grace period ended — deleted files for user=%s", e.userID)
 	}
 }
 

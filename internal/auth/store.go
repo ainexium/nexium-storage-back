@@ -40,8 +40,8 @@ func NewStore(db *pgxpool.Pool) Store { return &pgStore{db} }
 
 func (s *pgStore) CreateUser(ctx context.Context, u *User) error {
 	_, err := s.db.Exec(ctx,
-		`INSERT INTO users (id, name, email, password_hash, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6)`,
+		`INSERT INTO users (id, name, email, password_hash, terms_accepted_at, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, now(), $5, $6)`,
 		u.ID, u.Name, u.Email, u.PasswordHash, u.CreatedAt, u.UpdatedAt,
 	)
 	return err

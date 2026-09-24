@@ -50,6 +50,9 @@ func NewService(store Store, cfg *config.Config, m *mailer.Mailer) Service {
 }
 
 func (s *service) Register(ctx context.Context, req *RegisterRequest) (*VerificationSentResponse, error) {
+	if !req.TermsAccepted {
+		return nil, apierr.ErrBadRequest("you must accept the terms of service")
+	}
 	if strings.TrimSpace(req.Name) == "" {
 		return nil, apierr.ErrBadRequest("name is required")
 	}

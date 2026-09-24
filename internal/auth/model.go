@@ -29,9 +29,10 @@ type UpdateProfileRequest struct {
 }
 
 type RegisterRequest struct {
-	Name     string `json:"name"`
-	Email    string `json:"email"`
-	Password string `json:"password"`
+	Name          string `json:"name"`
+	Email         string `json:"email"`
+	Password      string `json:"password"`
+	TermsAccepted bool   `json:"terms_accepted"`
 }
 
 type LoginRequest struct {
