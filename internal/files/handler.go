@@ -51,8 +51,15 @@ func (h *Handler) FileRoutes() chi.Router {
 }
 
 // Routes for /api/v1/ext/buckets/{bucketID}/files (API key auth)
+// RequireBucketScope enforces the key's allowed_bucket_ids scope before any handler runs.
 func (h *Handler) ExtBucketRoutes() chi.Router {
-	return h.BucketRoutes()
+	r := chi.NewRouter()
+	r.Use(mw.RequireBucketScope())
+	r.Post("/", h.upload)
+	r.Get("/", h.list)
+	r.Post("/presign", h.presign)
+	r.Post("/confirm", h.confirm)
+	return r
 }
 
 // Routes for /api/v1/ext/files (API key auth)

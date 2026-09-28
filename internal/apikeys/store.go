@@ -14,7 +14,7 @@ type Store interface {
 	Create(ctx context.Context, k *APIKey, keyHash string) error
 	ListByProject(ctx context.Context, projectID, userID uuid.UUID) ([]*APIKey, error)
 	Revoke(ctx context.Context, id, userID uuid.UUID) error
-	GetProjectByKeyHash(ctx context.Context, keyHash string) (uuid.UUID, error)
+	GetKeyInfo(ctx context.Context, keyHash string) (projectID uuid.UUID, allowedBucketIDs []uuid.UUID, err error)
 	UpdateLastUsed(ctx context.Context, keyHash string) error
 }
 
@@ -23,17 +23,26 @@ type pgStore struct{ db *pgxpool.Pool }
 func NewStore(db *pgxpool.Pool) Store { return &pgStore{db} }
 
 func (s *pgStore) Create(ctx context.Context, k *APIKey, keyHash string) error {
+	var allowedBucketStrs interface{}
+	if len(k.AllowedBucketIDs) > 0 {
+		strs := make([]string, len(k.AllowedBucketIDs))
+		for i, id := range k.AllowedBucketIDs {
+			strs[i] = id.String()
+		}
+		allowedBucketStrs = strs
+	}
+
 	_, err := s.db.Exec(ctx,
-		`INSERT INTO api_keys (id, project_id, name, prefix, key_hash, created_at)
-		 VALUES ($1, $2, $3, $4, $5, $6)`,
-		k.ID, k.ProjectID, k.Name, k.Prefix, keyHash, k.CreatedAt,
+		`INSERT INTO api_keys (id, project_id, name, prefix, key_hash, allowed_bucket_ids, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		k.ID, k.ProjectID, k.Name, k.Prefix, keyHash, allowedBucketStrs, k.CreatedAt,
 	)
 	return err
 }
 
 func (s *pgStore) ListByProject(ctx context.Context, projectID, userID uuid.UUID) ([]*APIKey, error) {
 	rows, err := s.db.Query(ctx,
-		`SELECT k.id, k.project_id, k.name, k.prefix, k.last_used_at, k.revoked_at, k.created_at
+		`SELECT k.id, k.project_id, k.name, k.prefix, k.allowed_bucket_ids, k.last_used_at, k.revoked_at, k.created_at
 		 FROM api_keys k
 		 JOIN projects p ON p.id = k.project_id
 		 WHERE k.project_id = $1 AND p.user_id = $2
@@ -47,9 +56,11 @@ func (s *pgStore) ListByProject(ctx context.Context, projectID, userID uuid.UUID
 	var list []*APIKey
 	for rows.Next() {
 		k := &APIKey{}
-		if err := rows.Scan(&k.ID, &k.ProjectID, &k.Name, &k.Prefix, &k.LastUsedAt, &k.RevokedAt, &k.CreatedAt); err != nil {
+		var strIDs []string
+		if err := rows.Scan(&k.ID, &k.ProjectID, &k.Name, &k.Prefix, &strIDs, &k.LastUsedAt, &k.RevokedAt, &k.CreatedAt); err != nil {
 			return nil, err
 		}
+		k.AllowedBucketIDs = parseUUIDs(strIDs)
 		list = append(list, k)
 	}
 	return list, rows.Err()
@@ -65,16 +76,20 @@ func (s *pgStore) Revoke(ctx context.Context, id, userID uuid.UUID) error {
 	return err
 }
 
-func (s *pgStore) GetProjectByKeyHash(ctx context.Context, keyHash string) (uuid.UUID, error) {
+func (s *pgStore) GetKeyInfo(ctx context.Context, keyHash string) (uuid.UUID, []uuid.UUID, error) {
 	var projectID uuid.UUID
+	var strIDs []string
 	err := s.db.QueryRow(ctx,
-		`SELECT project_id FROM api_keys
+		`SELECT project_id, allowed_bucket_ids FROM api_keys
 		 WHERE key_hash = $1 AND revoked_at IS NULL`, keyHash,
-	).Scan(&projectID)
+	).Scan(&projectID, &strIDs)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return uuid.Nil, errors.New("key not found")
+		return uuid.Nil, nil, errors.New("key not found")
 	}
-	return projectID, err
+	if err != nil {
+		return uuid.Nil, nil, err
+	}
+	return projectID, parseUUIDs(strIDs), nil
 }
 
 func (s *pgStore) UpdateLastUsed(ctx context.Context, keyHash string) error {
@@ -83,4 +98,17 @@ func (s *pgStore) UpdateLastUsed(ctx context.Context, keyHash string) error {
 		time.Now().UTC(), keyHash,
 	)
 	return err
+}
+
+func parseUUIDs(strs []string) []uuid.UUID {
+	if len(strs) == 0 {
+		return nil
+	}
+	ids := make([]uuid.UUID, 0, len(strs))
+	for _, s := range strs {
+		if id, err := uuid.Parse(s); err == nil {
+			ids = append(ids, id)
+		}
+	}
+	return ids
 }

@@ -17,7 +17,7 @@ type Service interface {
 	Create(ctx context.Context, userID, projectID uuid.UUID, req *CreateRequest) (*CreateResponse, error)
 	List(ctx context.Context, userID, projectID uuid.UUID) ([]*APIKey, error)
 	Revoke(ctx context.Context, userID, id uuid.UUID) error
-	ValidateKey(ctx context.Context, keyHash string) (uuid.UUID, error)
+	GetKeyScope(ctx context.Context, keyHash string) (projectID uuid.UUID, allowedBucketIDs []uuid.UUID, err error)
 }
 
 type service struct{ store Store }
@@ -40,11 +40,12 @@ func (s *service) Create(ctx context.Context, userID, projectID uuid.UUID, req *
 	prefix := raw[:len("nx_live_")+8]
 
 	key := &APIKey{
-		ID:        uuid.New(),
-		ProjectID: projectID,
-		Name:      name,
-		Prefix:    prefix,
-		CreatedAt: time.Now().UTC(),
+		ID:               uuid.New(),
+		ProjectID:        projectID,
+		Name:             name,
+		Prefix:           prefix,
+		AllowedBucketIDs: req.AllowedBucketIDs,
+		CreatedAt:        time.Now().UTC(),
 	}
 	if err := s.store.Create(ctx, key, keyHash); err != nil {
 		return nil, err
@@ -68,15 +69,15 @@ func (s *service) Revoke(ctx context.Context, userID, id uuid.UUID) error {
 	return s.store.Revoke(ctx, id, userID)
 }
 
-func (s *service) ValidateKey(ctx context.Context, keyHash string) (uuid.UUID, error) {
-	projectID, err := s.store.GetProjectByKeyHash(ctx, keyHash)
+func (s *service) GetKeyScope(ctx context.Context, keyHash string) (uuid.UUID, []uuid.UUID, error) {
+	projectID, allowedBucketIDs, err := s.store.GetKeyInfo(ctx, keyHash)
 	if err != nil {
-		return uuid.Nil, apierr.ErrUnauthorized
+		return uuid.Nil, nil, apierr.ErrUnauthorized
 	}
 	go func() {
 		_ = s.store.UpdateLastUsed(context.Background(), keyHash)
 	}()
-	return projectID, nil
+	return projectID, allowedBucketIDs, nil
 }
 
 func generateAPIKey() (string, error) {
