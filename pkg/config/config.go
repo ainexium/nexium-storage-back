@@ -30,6 +30,8 @@ type Config struct {
 	MailFromName         string
 	AdullamAPIKey        string
 	AdullamWebhookSecret string
+	SaspayAPIKey         string
+	SaspayWebhookSecret  string
 	SuperAdminEmail      string
 }
 
@@ -73,6 +75,8 @@ func Load() *Config {
 		MailFromName:         getEnv("MAIL_FROM_NAME", "NEXIUM Storage"),
 		AdullamAPIKey:        getEnv("ADULLAM_API_KEY", ""),
 		AdullamWebhookSecret: getEnv("ADULLAM_WEBHOOK_SECRET", ""),
+		SaspayAPIKey:         getEnv("SASPAY_API_KEY", ""),
+		SaspayWebhookSecret:  getEnv("SASPAY_WEBHOOK_SECRET", ""),
 		SuperAdminEmail:      getEnv("SUPER_ADMIN_EMAIL", ""),
 	}
 }

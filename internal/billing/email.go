@@ -9,7 +9,7 @@ import (
 
 // ── HTML email ────────────────────────────────────────────────────────────────
 
-func confirmationEmailHTML(userName, userEmail string, plan *Plan, periodEnd time.Time) string {
+func confirmationEmailHTML(userName, userEmail string, plan *Plan, periodEnd time.Time, feeXOF int) string {
 	fmtXOF := func(n int) string {
 		s := fmt.Sprintf("%d", n)
 		if len(s) > 3 {
@@ -69,7 +69,12 @@ func confirmationEmailHTML(userName, userEmail string, plan *Plan, periodEnd tim
                 <td style="padding:12px 16px;font-size:13px;color:#1a1a2e;font-weight:600;text-align:right;border-bottom:1px solid #f0f0f5;">%s</td>
               </tr>
               <tr style="background:#f8f8fb;">
-                <td style="padding:12px 16px;font-size:13px;color:#444;border-bottom:1px solid #f0f0f5;">Montant payé</td>
+                <td style="padding:12px 16px;font-size:13px;color:#444;border-bottom:1px solid #f0f0f5;">Sous-total</td>
+                <td style="padding:12px 16px;font-size:13px;color:#1a1a2e;font-weight:600;text-align:right;border-bottom:1px solid #f0f0f5;">%s</td>
+              </tr>
+              %s
+              <tr>
+                <td style="padding:12px 16px;font-size:13px;color:#444;font-weight:600;border-bottom:1px solid #f0f0f5;">Total payé</td>
                 <td style="padding:12px 16px;font-size:13px;color:#1a1a2e;font-weight:700;text-align:right;border-bottom:1px solid #f0f0f5;">%s</td>
               </tr>
               <tr>
@@ -122,6 +127,8 @@ func confirmationEmailHTML(userName, userEmail string, plan *Plan, periodEnd tim
 		plan.Name,
 		plan.Name,
 		fmtXOF(plan.PriceXOF),
+		feeRowHTML(feeXOF),
+		fmtXOF(plan.PriceXOF+feeXOF),
 		fmtStorage(plan.StorageBytes),
 		fmtDate(time.Now()),
 		fmtDate(periodEnd),
@@ -233,6 +240,7 @@ func addonConfirmationHTML(userName, userEmail string, addon *StorageAddon) stri
 		}
 		return s + " XOF"
 	}
+	totalXOF := addon.PriceXOF + addon.FeeXOF
 
 	return fmt.Sprintf(`<!DOCTYPE html>
 <html lang="fr">
@@ -275,7 +283,12 @@ func addonConfirmationHTML(userName, userEmail string, addon *StorageAddon) stri
                 <td style="padding:12px 16px;font-size:13px;color:#1a1a2e;font-weight:600;text-align:right;border-bottom:1px solid #f0f0f5;">%s</td>
               </tr>
               <tr style="background:#f8f8fb;">
-                <td style="padding:12px 16px;font-size:13px;color:#444;">Montant payé</td>
+                <td style="padding:12px 16px;font-size:13px;color:#444;border-bottom:1px solid #f0f0f5;">Sous-total</td>
+                <td style="padding:12px 16px;font-size:13px;color:#1a1a2e;font-weight:600;text-align:right;border-bottom:1px solid #f0f0f5;">%s</td>
+              </tr>
+              %s
+              <tr>
+                <td style="padding:12px 16px;font-size:13px;color:#444;font-weight:600;">Total payé</td>
                 <td style="padding:12px 16px;font-size:13px;color:#1a1a2e;font-weight:700;text-align:right;">%s</td>
               </tr>
             </table>
@@ -300,6 +313,8 @@ func addonConfirmationHTML(userName, userEmail string, addon *StorageAddon) stri
 		label, fmtXOF(addon.PriceXOF),
 		userName,
 		fmtStorage(addon.Bytes), fmtXOF(addon.PriceXOF),
+		feeRowHTML(addon.FeeXOF),
+		fmtXOF(totalXOF),
 		userEmail,
 		time.Now().Year(),
 	)
@@ -411,6 +426,7 @@ type receiptData struct {
 	Plan      *Plan
 	PeriodEnd time.Time
 	PaymentAt time.Time
+	FeeXOF    int // 0 = frais inconnus (SasPay), >0 = frais réseau facturés (Adullam 1%)
 }
 
 func generateReceiptPDF(d receiptData) []byte {
@@ -419,6 +435,7 @@ func generateReceiptPDF(d receiptData) []byte {
 		return fmt.Sprintf("%02d %s %d", t.Day(), months[t.Month()-1], t.Year())
 	}
 
+	totalXOF := d.Plan.PriceXOF + d.FeeXOF
 	lines := []pdfLine{
 		{text: "NEXIUM STORAGE", size: 18, bold: true, y: 790},
 		{text: "console.nexiumai.io", size: 10, y: 770},
@@ -426,17 +443,33 @@ func generateReceiptPDF(d receiptData) []byte {
 		{text: "RECU DE PAIEMENT", size: 13, bold: true, y: 730},
 		{text: strings.Repeat("-", 60), size: 10, y: 718},
 		{text: fmt.Sprintf("Plan           : %s", d.Plan.Name), size: 10, y: 700},
-		{text: fmt.Sprintf("Montant        : %s XOF", fmtXOFPDF(d.Plan.PriceXOF)), size: 10, y: 684},
-		{text: fmt.Sprintf("Stockage       : %s", fmtStorage(d.Plan.StorageBytes)), size: 10, y: 668},
-		{text: fmt.Sprintf("Date paiement  : %s", fmtDate(d.PaymentAt)), size: 10, y: 652},
-		{text: fmt.Sprintf("Valable jusqu  : %s", fmtDate(d.PeriodEnd)), size: 10, y: 636},
-		{text: strings.Repeat("-", 60), size: 10, y: 624},
-		{text: fmt.Sprintf("Compte         : %s", pdfStr(d.UserName)), size: 10, y: 606},
-		{text: fmt.Sprintf("Email          : %s", d.UserEmail), size: 10, y: 590},
-		{text: strings.Repeat("-", 60), size: 10, y: 578},
-		{text: "Merci de votre confiance.", size: 10, y: 558},
-		{text: "Pour toute question : support@nexium.ai", size: 10, y: 542},
+		{text: fmt.Sprintf("Sous-total     : %s XOF", fmtXOFPDF(d.Plan.PriceXOF)), size: 10, y: 684},
 	}
+	if d.FeeXOF > 0 {
+		lines = append(lines,
+			pdfLine{text: fmt.Sprintf("Frais reseau   : +%s XOF", fmtXOFPDF(d.FeeXOF)), size: 10, y: 668},
+			pdfLine{text: fmt.Sprintf("Total paye     : %s XOF", fmtXOFPDF(totalXOF)), size: 10, bold: true, y: 652},
+		)
+	} else {
+		lines = append(lines,
+			pdfLine{text: fmt.Sprintf("Total paye     : %s XOF", fmtXOFPDF(totalXOF)), size: 10, bold: true, y: 668},
+		)
+	}
+	yOffset := 0
+	if d.FeeXOF > 0 {
+		yOffset = 16
+	}
+	lines = append(lines,
+		pdfLine{text: fmt.Sprintf("Stockage       : %s", fmtStorage(d.Plan.StorageBytes)), size: 10, y: 636 - yOffset},
+		pdfLine{text: fmt.Sprintf("Date paiement  : %s", fmtDate(d.PaymentAt)), size: 10, y: 620 - yOffset},
+		pdfLine{text: fmt.Sprintf("Valable jusqu  : %s", fmtDate(d.PeriodEnd)), size: 10, y: 604 - yOffset},
+		pdfLine{text: strings.Repeat("-", 60), size: 10, y: 592 - yOffset},
+		pdfLine{text: fmt.Sprintf("Compte         : %s", pdfStr(d.UserName)), size: 10, y: 574 - yOffset},
+		pdfLine{text: fmt.Sprintf("Email          : %s", d.UserEmail), size: 10, y: 558 - yOffset},
+		pdfLine{text: strings.Repeat("-", 60), size: 10, y: 546 - yOffset},
+		pdfLine{text: "Merci de votre confiance.", size: 10, y: 526 - yOffset},
+		pdfLine{text: "Pour toute question : support@nexium.ai", size: 10, y: 510 - yOffset},
+	)
 
 	return buildPDF(lines)
 }
@@ -561,6 +594,16 @@ func pdfStr(s string) string {
 		"“", "\"", "”", "\"",
 	)
 	return r.Replace(s)
+}
+
+func feeRowHTML(feeXOF int) string {
+	if feeXOF <= 0 {
+		return ""
+	}
+	return fmt.Sprintf(`<tr>
+                <td style="padding:12px 16px;font-size:13px;color:#888;border-bottom:1px solid #f0f0f5;">Frais r&#233;seau</td>
+                <td style="padding:12px 16px;font-size:13px;color:#888;text-align:right;border-bottom:1px solid #f0f0f5;">+%s XOF</td>
+              </tr>`, fmtXOFPDF(feeXOF))
 }
 
 func fmtStorage(b int64) string {

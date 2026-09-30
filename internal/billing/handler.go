@@ -20,16 +20,16 @@ import (
 )
 
 type Handler struct {
-	svc           *Service
-	webhookSecret string
-	db            *pgxpool.Pool
+	svc                 *Service
+	webhookSecret       string
+	saspayWebhookSecret string
+	db                  *pgxpool.Pool
 }
 
-func NewHandler(svc *Service, webhookSecret string, db *pgxpool.Pool) *Handler {
-	return &Handler{svc: svc, webhookSecret: webhookSecret, db: db}
+func NewHandler(svc *Service, webhookSecret, saspayWebhookSecret string, db *pgxpool.Pool) *Handler {
+	return &Handler{svc: svc, webhookSecret: webhookSecret, saspayWebhookSecret: saspayWebhookSecret, db: db}
 }
 
-// AuthRoutes are mounted under the JWT-authenticated group.
 func (h *Handler) AuthRoutes() chi.Router {
 	r := chi.NewRouter()
 	r.Get("/plans", h.listPlans)
@@ -37,7 +37,6 @@ func (h *Handler) AuthRoutes() chi.Router {
 	r.Post("/checkout", h.checkout)
 	r.Get("/payments", h.listPayments)
 	r.Get("/payments/{paymentID}", h.getPaymentStatus)
-	// Add-ons
 	r.Get("/addons/packages", h.listAddonPackages)
 	r.Post("/addons/checkout", h.addonCheckout)
 	r.Get("/addons", h.listAddons)
@@ -45,17 +44,64 @@ func (h *Handler) AuthRoutes() chi.Router {
 	return r
 }
 
-// ChannelRoutes are public — no auth required.
+// PublicRoutes are mounted without JWT auth.
+func (h *Handler) PublicRoutes() chi.Router {
+	r := chi.NewRouter()
+	r.Get("/channels", h.listChannels)
+	r.Get("/countries", h.listCountries)
+	return r
+}
+
+// ChannelRoutes kept for backward compat — proxies to PublicRoutes().
 func (h *Handler) ChannelRoutes() chi.Router {
 	r := chi.NewRouter()
 	r.Get("/", h.listChannels)
 	return r
 }
 
+func (h *Handler) WebhookRoutes() chi.Router {
+	r := chi.NewRouter()
+	r.Post("/", h.webhook)
+	r.Post("/saspay", h.saspayWebhook)
+	return r
+}
+
+// ListChannelsHandler and ListCountriesHandler are exported so main.go can
+// register them as bare r.Get routes without a conflicting Mount prefix.
+func (h *Handler) ListChannelsHandler() http.HandlerFunc  { return h.listChannels }
+func (h *Handler) ListCountriesHandler() http.HandlerFunc { return h.listCountries }
+
+// ── Public handlers ──────────────────────────────────────────────────────────
+
+func (h *Handler) listCountries(w http.ResponseWriter, r *http.Request) {
+	countries, err := h.svc.ListCountries(r.Context())
+	if err != nil {
+		response.Error(w, err)
+		return
+	}
+	if countries == nil {
+		countries = []Country{}
+	}
+	response.OK(w, countries)
+}
+
 func (h *Handler) listChannels(w http.ResponseWriter, r *http.Request) {
-	rows, err := h.db.Query(r.Context(),
-		`SELECT id, name, slug, COALESCE(logo_url,''), is_active, COALESCE(maintenance_note,''), display_order
-		 FROM payment_channels ORDER BY display_order ASC, name ASC`)
+	country := r.URL.Query().Get("country")
+
+	var query string
+	var args []any
+	if country != "" {
+		query = `SELECT id, name, slug, COALESCE(logo_url,''), is_active, COALESCE(maintenance_note,''), display_order,
+		                COALESCE(country_code,'CI'), COALESCE(provider,'adullam')
+		         FROM payment_channels WHERE country_code = $1 ORDER BY display_order ASC, name ASC`
+		args = []any{country}
+	} else {
+		query = `SELECT id, name, slug, COALESCE(logo_url,''), is_active, COALESCE(maintenance_note,''), display_order,
+		                COALESCE(country_code,'CI'), COALESCE(provider,'adullam')
+		         FROM payment_channels ORDER BY display_order ASC, name ASC`
+	}
+
+	rows, err := h.db.Query(r.Context(), query, args...)
 	if err != nil {
 		response.Error(w, err)
 		return
@@ -69,11 +115,13 @@ func (h *Handler) listChannels(w http.ResponseWriter, r *http.Request) {
 		IsActive        bool   `json:"is_active"`
 		MaintenanceNote string `json:"maintenance_note,omitempty"`
 		DisplayOrder    int    `json:"display_order"`
+		CountryCode     string `json:"country_code"`
+		Provider        string `json:"provider"`
 	}
 	var list []Channel
 	for rows.Next() {
 		var c Channel
-		if err := rows.Scan(&c.ID, &c.Name, &c.Slug, &c.LogoURL, &c.IsActive, &c.MaintenanceNote, &c.DisplayOrder); err != nil {
+		if err := rows.Scan(&c.ID, &c.Name, &c.Slug, &c.LogoURL, &c.IsActive, &c.MaintenanceNote, &c.DisplayOrder, &c.CountryCode, &c.Provider); err != nil {
 			response.Error(w, err)
 			return
 		}
@@ -85,12 +133,7 @@ func (h *Handler) listChannels(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, list)
 }
 
-// WebhookRoutes are mounted without JWT auth — verified via HMAC signature.
-func (h *Handler) WebhookRoutes() chi.Router {
-	r := chi.NewRouter()
-	r.Post("/", h.webhook)
-	return r
-}
+// ── Auth handlers ─────────────────────────────────────────────────────────────
 
 func (h *Handler) listPlans(w http.ResponseWriter, r *http.Request) {
 	plans, err := h.svc.ListPlans(r.Context())
@@ -177,22 +220,19 @@ func (h *Handler) listPayments(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, payments)
 }
 
-// webhook handles inbound events from Adullam.
-// Adullam signs requests with HMAC-SHA256 of the raw body using the webhook secret.
-// Header: X-Adullam-Signature: sha256=<hex>
+// ── Webhook — Adullam ────────────────────────────────────────────────────────
+
 func (h *Handler) webhook(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-
-	if h.webhookSecret == "" || !h.verifySignature(body, r.Header.Get("X-Adullam-Signature")) {
-		log.Printf("[billing] webhook: invalid signature")
+	if h.webhookSecret == "" || !h.verifySignature(body, r.Header.Get("X-Adullam-Signature"), h.webhookSecret) {
+		log.Printf("[billing] adullam webhook: invalid signature")
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
-
 	var event struct {
 		Event string          `json:"event"`
 		Data  json.RawMessage `json:"data"`
@@ -201,28 +241,74 @@ func (h *Handler) webhook(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-
 	if event.Event != "payment" {
-		w.WriteHeader(http.StatusOK) // ignore non-payment events
+		w.WriteHeader(http.StatusOK)
 		return
 	}
-
 	var payment adullam.Payment
 	if err := json.Unmarshal(event.Data, &payment); err != nil {
-		log.Printf("[billing] webhook: failed to decode payment data: %v", err)
+		log.Printf("[billing] adullam webhook: failed to decode payment data: %v", err)
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-
 	if err := h.svc.HandleWebhook(r.Context(), &payment); err != nil {
-		log.Printf("[billing] webhook: handler error: %v", err)
+		log.Printf("[billing] adullam webhook: handler error: %v", err)
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusOK)
 }
 
-// ── Add-on handlers ──────────────────────────────────────────────────────────
+// ── Webhook — SasPay ─────────────────────────────────────────────────────────
+
+func (h *Handler) saspayWebhook(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	// Verify signature when secret is configured
+	if h.saspayWebhookSecret != "" {
+		sig := r.Header.Get("X-SasPay-Signature")
+		if sig == "" {
+			// Some implementations use a different header
+			sig = r.Header.Get("X-Signature")
+		}
+		if !h.verifySignature(body, sig, h.saspayWebhookSecret) {
+			log.Printf("[billing] saspay webhook: invalid signature")
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+	}
+
+	var event SaspayWebhookEvent
+	if err := json.Unmarshal(body, &event); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	// Only process success events
+	if event.EventType != "transaction.success" && event.EventType != "payment.success" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	var payment SaspayWebhookPayment
+	if err := json.Unmarshal(event.Data, &payment); err != nil {
+		log.Printf("[billing] saspay webhook: failed to decode payment data: %v", err)
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	if err := h.svc.HandleSaspayWebhook(r.Context(), payment.ID); err != nil {
+		log.Printf("[billing] saspay webhook: handler error: %v", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// ── Add-on handlers ───────────────────────────────────────────────────────────
 
 func (h *Handler) listAddonPackages(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, h.svc.GetAddonPackages())
@@ -283,12 +369,12 @@ func (h *Handler) listAddons(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, addons)
 }
 
-func (h *Handler) verifySignature(body []byte, sigHeader string) bool {
+func (h *Handler) verifySignature(body []byte, sigHeader, secret string) bool {
 	if !strings.HasPrefix(sigHeader, "sha256=") {
 		return false
 	}
 	expected := strings.TrimPrefix(sigHeader, "sha256=")
-	mac := hmac.New(sha256.New, []byte(h.webhookSecret))
+	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write(body)
 	actual := hex.EncodeToString(mac.Sum(nil))
 	return hmac.Equal([]byte(actual), []byte(expected))

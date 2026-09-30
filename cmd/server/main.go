@@ -29,6 +29,7 @@ import (
 	"nexium.ai/api/internal/webhooks"
 	"nexium.ai/api/pkg/adullam"
 	"nexium.ai/api/pkg/config"
+	"nexium.ai/api/pkg/saspay"
 	"nexium.ai/api/pkg/database"
 	mw "nexium.ai/api/pkg/middleware"
 )
@@ -82,8 +83,9 @@ func main() {
 
 	// Billing initialisé avant fileSvc pour pouvoir injecter GetUserFileSizeLimit
 	adullamClient := adullam.New(cfg.AdullamAPIKey)
+	saspayClient := saspay.New(cfg.SaspayAPIKey)
 	billingStore := billing.NewStore(db)
-	billingSvc := billing.NewService(billingStore, adullamClient,
+	billingSvc := billing.NewService(billingStore, adullamClient, saspayClient,
 		func(ctx context.Context, userID uuid.UUID, quotaBytes *int64) error {
 			return authStore.SetStorageQuota(ctx, userID, quotaBytes)
 		},
@@ -96,7 +98,7 @@ func main() {
 		},
 		mail,
 	)
-	billingHandler := billing.NewHandler(billingSvc, cfg.AdullamWebhookSecret, db)
+	billingHandler := billing.NewHandler(billingSvc, cfg.AdullamWebhookSecret, cfg.SaspayWebhookSecret, db)
 
 	fileSvc := files.NewService(fileStore, r2, func(ctx context.Context, bucketID, userID uuid.UUID) (bool, bool, error) {
 		b, err := bucketStore.GetByIDAndUser(ctx, bucketID, userID)
@@ -149,8 +151,9 @@ func main() {
 	// Endpoint public — pas d'auth, vérifie is_public avant de servir
 	r.Mount("/api/v1/public/files", fileHandler.PublicRoutes())
 
-	// Channels de paiement — public (affiché avant login)
-	r.Mount("/api/v1/billing/channels", billingHandler.ChannelRoutes())
+	// Billing public endpoints (channels, countries) — no auth needed
+	r.Get("/api/v1/billing/channels", billingHandler.ListChannelsHandler())
+	r.Get("/api/v1/billing/countries", billingHandler.ListCountriesHandler())
 
 	// Auth routes with rate limiting (20 req/min per IP)
 	r.Group(func(r chi.Router) {

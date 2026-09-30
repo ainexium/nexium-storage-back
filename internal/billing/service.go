@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"nexium.ai/api/internal/mailer"
 	"nexium.ai/api/pkg/adullam"
 	"nexium.ai/api/pkg/apierr"
+	"nexium.ai/api/pkg/saspay"
 )
 
 type SetQuotaFn    func(ctx context.Context, userID uuid.UUID, quotaBytes *int64) error
@@ -18,13 +20,25 @@ type GetUserInfoFn func(ctx context.Context, userID uuid.UUID) (name, email stri
 type Service struct {
 	store       Store
 	adullam     *adullam.Client
+	saspay      *saspay.Client
 	setQuota    SetQuotaFn
 	getUserInfo GetUserInfoFn
 	mail        *mailer.Mailer
 }
 
-func NewService(store Store, client *adullam.Client, setQuota SetQuotaFn, getUserInfo GetUserInfoFn, mail *mailer.Mailer) *Service {
-	return &Service{store: store, adullam: client, setQuota: setQuota, getUserInfo: getUserInfo, mail: mail}
+func NewService(store Store, adullamClient *adullam.Client, saspayClient *saspay.Client, setQuota SetQuotaFn, getUserInfo GetUserInfoFn, mail *mailer.Mailer) *Service {
+	return &Service{
+		store:       store,
+		adullam:     adullamClient,
+		saspay:      saspayClient,
+		setQuota:    setQuota,
+		getUserInfo: getUserInfo,
+		mail:        mail,
+	}
+}
+
+func (s *Service) ListCountries(ctx context.Context) ([]Country, error) {
+	return s.store.ListActiveCountries(ctx)
 }
 
 func (s *Service) ListPlans(ctx context.Context) ([]Plan, error) {
@@ -37,7 +51,6 @@ func (s *Service) GetSubscription(ctx context.Context, userID uuid.UUID) (sub *S
 		return nil, nil, err
 	}
 	if sub != nil && sub.Status == "active" {
-		// Real-time expiry: expire immediately if period ended without the daily job having run yet
 		if sub.CurrentPeriodEnd != nil && time.Now().After(*sub.CurrentPeriodEnd) {
 			if expErr := s.expireUser(ctx, userID); expErr != nil {
 				log.Printf("[billing] expireUser error user=%s: %v", userID, expErr)
@@ -47,9 +60,8 @@ func (s *Service) GetSubscription(ctx context.Context, userID uuid.UUID) (sub *S
 			return sub, sub.Plan, nil
 		}
 	} else {
-		sub = nil // treat expired/cancelled as no subscription
+		sub = nil
 	}
-	// No active subscription → free plan
 	free, err := s.store.GetPlanBySlug(ctx, "free")
 	if err != nil {
 		return nil, nil, err
@@ -57,8 +69,6 @@ func (s *Service) GetSubscription(ctx context.Context, userID uuid.UUID) (sub *S
 	return nil, free, nil
 }
 
-// expireUser marque l'abonnement comme expiré et remet le quota au niveau Free.
-// Les add-ons restent en base et se réactivent automatiquement au renouvellement.
 func (s *Service) expireUser(ctx context.Context, userID uuid.UUID) error {
 	if err := s.store.ExpireSubscription(ctx, userID); err != nil {
 		return err
@@ -71,6 +81,9 @@ func (s *Service) expireUser(ctx context.Context, userID uuid.UUID) error {
 }
 
 func (s *Service) InitiateCheckout(ctx context.Context, userID uuid.UUID, req CheckoutRequest) (*BillingPayment, error) {
+	if req.CountryCode == "" {
+		req.CountryCode = "CI"
+	}
 	planID, err := uuid.Parse(req.PlanID)
 	if err != nil {
 		return nil, apierr.ErrBadRequest("invalid plan_id")
@@ -82,7 +95,7 @@ func (s *Service) InitiateCheckout(ctx context.Context, userID uuid.UUID, req Ch
 	if plan.PriceXOF == 0 {
 		return nil, apierr.ErrBadRequest("free plan requires no payment")
 	}
-	channelOK, err := s.store.IsActiveChannel(ctx, req.Channel)
+	channelOK, provider, err := s.store.GetChannelInfo(ctx, req.Channel)
 	if err != nil {
 		return nil, err
 	}
@@ -95,13 +108,15 @@ func (s *Service) InitiateCheckout(ctx context.Context, userID uuid.UUID, req Ch
 
 	paymentID := uuid.New()
 	p := &BillingPayment{
-		ID:        paymentID,
-		UserID:    userID,
-		PlanID:    plan.ID,
-		AmountXOF: plan.PriceXOF,
-		Status:    "pending",
-		Channel:   req.Channel,
-		Phone:     req.Phone,
+		ID:          paymentID,
+		UserID:      userID,
+		PlanID:      plan.ID,
+		AmountXOF:   plan.PriceXOF,
+		Status:      "pending",
+		Channel:     req.Channel,
+		Phone:       req.Phone,
+		Provider:    provider,
+		CountryCode: req.CountryCode,
 	}
 	if err := s.store.CreatePayment(ctx, p); err != nil {
 		return nil, fmt.Errorf("create payment record: %w", err)
@@ -112,34 +127,58 @@ func (s *Service) InitiateCheckout(ctx context.Context, userID uuid.UUID, req Ch
 		desc = desc[:48]
 	}
 
-	remote, err := s.adullam.CreatePayment(ctx, paymentID.String(), adullam.CreatePaymentInput{
-		Amount:        plan.PriceXOF,
-		Currency:      "xof",
-		CustomerPhone: req.Phone,
-		Channel:       req.Channel,
-		Description:   desc,
-	})
-	if err != nil {
-		_ = s.store.UpdatePaymentStatus(ctx, paymentID, "failed", "")
-		return nil, apierr.New(502, fmt.Sprintf("payment gateway error: %s", err.Error()))
-	}
-
-	if err := s.store.UpdatePaymentStatus(ctx, paymentID, remote.Status, remote.ID); err != nil {
-		return nil, err
-	}
-	p.AdullamID = remote.ID
-	p.Status = remote.Status
-	p.RedirectURL = remote.RedirectURL
-	p.Plan = plan
-	if remote.RedirectURL != "" {
-		if err := s.store.SetPaymentRedirectURL(ctx, paymentID, remote.RedirectURL); err != nil {
-			return nil, err
+	if provider == "adullam" {
+		remote, err := s.adullam.CreatePayment(ctx, paymentID.String(), adullam.CreatePaymentInput{
+			Amount:        plan.PriceXOF,
+			Currency:      "xof",
+			CustomerPhone: req.Phone,
+			Channel:       adullamChannel(req.Channel),
+			Description:   desc,
+		})
+		if err != nil {
+			_ = s.store.UpdatePaymentStatus(ctx, paymentID, "failed", "")
+			return nil, apierr.New(502, fmt.Sprintf("payment gateway error: %s", err.Error()))
+		}
+		_ = s.store.UpdatePaymentStatus(ctx, paymentID, remote.Status, remote.ID)
+		p.AdullamID = remote.ID
+		p.Status = remote.Status
+		p.RedirectURL = remote.RedirectURL
+		p.Plan = plan
+		if remote.RedirectURL != "" {
+			_ = s.store.SetPaymentRedirectURL(ctx, paymentID, remote.RedirectURL)
+		}
+	} else {
+		// SasPay
+		name, email, err := s.getUserInfo(ctx, userID)
+		if err != nil {
+			return nil, fmt.Errorf("getUserInfo: %w", err)
+		}
+		firstName, lastName := splitName(name)
+		remote, err := s.saspay.CreatePayment(ctx, paymentID.String(), saspay.CreateSoftpayInput{
+			Amount:      fmt.Sprintf("%.2f", float64(plan.PriceXOF)),
+			Currency:    currencyForCountry(req.CountryCode),
+			Country:     req.CountryCode,
+			Customer:    saspay.Customer{Email: email, FirstName: firstName, LastName: lastName, Phone: req.Phone},
+			Network:     req.Channel,
+			Description: desc,
+		})
+		if err != nil {
+			_ = s.store.UpdatePaymentStatus(ctx, paymentID, "failed", "")
+			return nil, apierr.New(502, fmt.Sprintf("payment gateway error: %s", err.Error()))
+		}
+		normalised := saspay.NormaliseStatus(remote.Status)
+		_ = s.store.UpdatePaymentStatus(ctx, paymentID, normalised, remote.ID)
+		p.AdullamID = remote.ID
+		p.Status = normalised
+		p.RedirectURL = remote.CheckoutURL
+		p.Plan = plan
+		if remote.CheckoutURL != "" {
+			_ = s.store.SetPaymentRedirectURL(ctx, paymentID, remote.CheckoutURL)
 		}
 	}
 	return p, nil
 }
 
-// GetPaymentStatus syncs with Adullam (fallback polling) and activates subscription on completion.
 func (s *Service) GetPaymentStatus(ctx context.Context, userID, paymentID uuid.UUID) (*BillingPayment, error) {
 	p, err := s.store.GetPayment(ctx, paymentID)
 	if err != nil {
@@ -148,41 +187,56 @@ func (s *Service) GetPaymentStatus(ctx context.Context, userID, paymentID uuid.U
 	if p == nil || p.UserID != userID {
 		return nil, apierr.ErrNotFound
 	}
-
-	// Terminal or no adullam id yet — return as-is
 	if isTerminal(p.Status) || p.AdullamID == "" {
 		return p, nil
 	}
 
-	remote, err := s.adullam.GetPayment(ctx, p.AdullamID)
-	if err != nil {
-		log.Printf("[billing] adullam poll error payment=%s: %v", p.ID, err)
-		return p, nil // return cached status on transient error
-	}
-
-	if remote.Status != p.Status {
-		if err := s.store.UpdatePaymentStatus(ctx, paymentID, remote.Status, remote.ID); err != nil {
-			return nil, err
+	if p.Provider == "saspay" {
+		remote, err := s.saspay.GetPayment(ctx, p.AdullamID)
+		if err != nil {
+			log.Printf("[billing] saspay poll error payment=%s: %v", p.ID, err)
+			return p, nil
 		}
-		p.Status = remote.Status
-	}
-
-	if p.Status == "completed" {
-		if err := s.activateSubscription(ctx, p.UserID, p.Plan); err != nil {
-			return nil, err
+		normalised := saspay.NormaliseStatus(remote.Status)
+		if normalised != p.Status {
+			_ = s.store.UpdatePaymentStatus(ctx, paymentID, normalised, remote.ID)
+			p.Status = normalised
+		}
+		if normalised == "failed" && remote.FailureReason != "" {
+			p.FailureReason = remote.FailureReason
+		}
+		if p.Status == "completed" {
+			if err := s.activateSubscription(ctx, p.UserID, p.Plan, p.FeeXOF); err != nil {
+				return nil, err
+			}
+		}
+	} else {
+		remote, err := s.adullam.GetPayment(ctx, p.AdullamID)
+		if err != nil {
+			log.Printf("[billing] adullam poll error payment=%s: %v", p.ID, err)
+			return p, nil
+		}
+		if remote.Status != p.Status {
+			_ = s.store.UpdatePaymentStatus(ctx, paymentID, remote.Status, remote.ID)
+			p.Status = remote.Status
+		}
+		if remote.Status == "failed" && remote.FailedReason != "" {
+			p.FailureReason = remote.FailedReason
+		}
+		if p.Status == "completed" {
+			if err := s.activateSubscription(ctx, p.UserID, p.Plan, p.FeeXOF); err != nil {
+				return nil, err
+			}
 		}
 	}
 	return p, nil
 }
 
 // HandleWebhook processes an inbound Adullam payment event.
-// Checks both billing_payments (subscriptions) and storage_addons.
 func (s *Service) HandleWebhook(ctx context.Context, adullamPayment *adullam.Payment) error {
 	if adullamPayment.Status != "completed" {
 		return nil
 	}
-
-	// 1. Subscription payment?
 	p, err := s.store.GetPaymentByAdullamID(ctx, adullamPayment.ID)
 	if err != nil {
 		return err
@@ -194,10 +248,8 @@ func (s *Service) HandleWebhook(ctx context.Context, adullamPayment *adullam.Pay
 		if err := s.store.UpdatePaymentStatus(ctx, p.ID, "completed", adullamPayment.ID); err != nil {
 			return err
 		}
-		return s.activateSubscription(ctx, p.UserID, p.Plan)
+		return s.activateSubscription(ctx, p.UserID, p.Plan, p.FeeXOF)
 	}
-
-	// 2. Storage add-on payment?
 	addon, err := s.store.GetAddonByAdullamID(ctx, adullamPayment.ID)
 	if err != nil {
 		return err
@@ -212,8 +264,40 @@ func (s *Service) HandleWebhook(ctx context.Context, adullamPayment *adullam.Pay
 		addon.Status = "completed"
 		return s.activateAddon(ctx, addon)
 	}
-
 	log.Printf("[billing] webhook: unknown adullam payment %s", adullamPayment.ID)
+	return nil
+}
+
+// HandleSaspayWebhook processes an inbound SasPay payment event.
+func (s *Service) HandleSaspayWebhook(ctx context.Context, gatewayPaymentID string) error {
+	p, err := s.store.GetPaymentByGatewayID(ctx, gatewayPaymentID, "saspay")
+	if err != nil {
+		return err
+	}
+	if p != nil {
+		if p.Status == "completed" {
+			return nil
+		}
+		if err := s.store.UpdatePaymentStatus(ctx, p.ID, "completed", gatewayPaymentID); err != nil {
+			return err
+		}
+		return s.activateSubscription(ctx, p.UserID, p.Plan, p.FeeXOF)
+	}
+	addon, err := s.store.GetAddonByGatewayID(ctx, gatewayPaymentID, "saspay")
+	if err != nil {
+		return err
+	}
+	if addon != nil {
+		if addon.Status == "completed" {
+			return nil
+		}
+		if err := s.store.UpdateAddonStatus(ctx, addon.ID, "completed", gatewayPaymentID); err != nil {
+			return err
+		}
+		addon.Status = "completed"
+		return s.activateAddon(ctx, addon)
+	}
+	log.Printf("[billing] saspay webhook: unknown payment %s", gatewayPaymentID)
 	return nil
 }
 
@@ -221,8 +305,6 @@ func (s *Service) ListPayments(ctx context.Context, userID uuid.UUID) ([]Billing
 	return s.store.ListUserPayments(ctx, userID)
 }
 
-// GetUserFileSizeLimit retourne la taille max par fichier selon le plan actif de l'utilisateur.
-// Retourne le max_file_bytes du plan Free si aucune subscription active.
 func (s *Service) GetUserFileSizeLimit(ctx context.Context, userID uuid.UUID) (int64, error) {
 	sub, err := s.store.GetSubscription(ctx, userID)
 	if err != nil {
@@ -233,12 +315,12 @@ func (s *Service) GetUserFileSizeLimit(ctx context.Context, userID uuid.UUID) (i
 	}
 	free, err := s.store.GetPlanBySlug(ctx, "free")
 	if err != nil || free == nil {
-		return 104857600, nil // 100 MB fallback si plans pas encore seeded
+		return 104857600, nil
 	}
 	return free.MaxFileBytes, nil
 }
 
-func (s *Service) activateSubscription(ctx context.Context, userID uuid.UUID, plan *Plan) error {
+func (s *Service) activateSubscription(ctx context.Context, userID uuid.UUID, plan *Plan, feeXOF int) error {
 	periodEnd := time.Now().AddDate(0, 1, 0)
 	if err := s.store.UpsertSubscription(ctx, userID, plan.ID, "active", &periodEnd); err != nil {
 		return err
@@ -249,12 +331,12 @@ func (s *Service) activateSubscription(ctx context.Context, userID uuid.UUID, pl
 		return err
 	}
 	if s.mail != nil && s.getUserInfo != nil {
-		go s.sendActivationEmail(userID, plan, periodEnd)
+		go s.sendActivationEmail(userID, plan, periodEnd, feeXOF)
 	}
 	return nil
 }
 
-func (s *Service) sendActivationEmail(userID uuid.UUID, plan *Plan, periodEnd time.Time) {
+func (s *Service) sendActivationEmail(userID uuid.UUID, plan *Plan, periodEnd time.Time, feeXOF int) {
 	ctx := context.Background()
 	name, email, err := s.getUserInfo(ctx, userID)
 	if err != nil || email == "" {
@@ -267,8 +349,9 @@ func (s *Service) sendActivationEmail(userID uuid.UUID, plan *Plan, periodEnd ti
 		Plan:      plan,
 		PeriodEnd: periodEnd,
 		PaymentAt: time.Now(),
+		FeeXOF:    feeXOF,
 	}
-	html := confirmationEmailHTML(name, email, plan, periodEnd)
+	html := confirmationEmailHTML(name, email, plan, periodEnd, feeXOF)
 	pdf := generateReceiptPDF(d)
 	filename := fmt.Sprintf("recu-nexium-%s.pdf", time.Now().Format("2006-01"))
 	if err := s.mail.SendWithAttachment(ctx, email, name,
@@ -284,6 +367,9 @@ func (s *Service) sendActivationEmail(userID uuid.UUID, plan *Plan, periodEnd ti
 func (s *Service) GetAddonPackages() []AddonPackage { return AddonPackages }
 
 func (s *Service) InitiateAddonCheckout(ctx context.Context, userID uuid.UUID, req AddonCheckoutRequest) (*StorageAddon, error) {
+	if req.CountryCode == "" {
+		req.CountryCode = "CI"
+	}
 	sub, err := s.store.GetSubscription(ctx, userID)
 	if err != nil {
 		return nil, err
@@ -291,7 +377,6 @@ func (s *Service) InitiateAddonCheckout(ctx context.Context, userID uuid.UUID, r
 	if sub == nil || sub.Plan == nil || !sub.Plan.AddonsEnabled {
 		return nil, apierr.ErrBadRequest("les add-ons ne sont pas disponibles sur votre plan actuel")
 	}
-
 	var pkg *AddonPackage
 	for i, p := range AddonPackages {
 		if p.ID == req.PackageID {
@@ -302,7 +387,7 @@ func (s *Service) InitiateAddonCheckout(ctx context.Context, userID uuid.UUID, r
 	if pkg == nil {
 		return nil, apierr.ErrBadRequest("package inconnu")
 	}
-	channelOK, err := s.store.IsActiveChannel(ctx, req.Channel)
+	channelOK, provider, err := s.store.GetChannelInfo(ctx, req.Channel)
 	if err != nil {
 		return nil, err
 	}
@@ -314,14 +399,16 @@ func (s *Service) InitiateAddonCheckout(ctx context.Context, userID uuid.UUID, r
 	}
 
 	addon := &StorageAddon{
-		ID:        uuid.New(),
-		UserID:    userID,
-		PackageID: pkg.ID,
-		Bytes:     pkg.Bytes,
-		PriceXOF:  pkg.PriceXOF,
-		Status:    "pending",
-		Channel:   req.Channel,
-		Phone:     req.Phone,
+		ID:          uuid.New(),
+		UserID:      userID,
+		PackageID:   pkg.ID,
+		Bytes:       pkg.Bytes,
+		PriceXOF:    pkg.PriceXOF,
+		Status:      "pending",
+		Channel:     req.Channel,
+		Phone:       req.Phone,
+		Provider:    provider,
+		CountryCode: req.CountryCode,
 	}
 	if err := s.store.CreateAddon(ctx, addon); err != nil {
 		return nil, fmt.Errorf("create addon record: %w", err)
@@ -331,21 +418,45 @@ func (s *Service) InitiateAddonCheckout(ctx context.Context, userID uuid.UUID, r
 	if len(desc) > 48 {
 		desc = desc[:48]
 	}
-	remote, err := s.adullam.CreatePayment(ctx, addon.ID.String(), adullam.CreatePaymentInput{
-		Amount:        pkg.PriceXOF,
-		Currency:      "xof",
-		CustomerPhone: req.Phone,
-		Channel:       req.Channel,
-		Description:   desc,
-	})
-	if err != nil {
-		_ = s.store.UpdateAddonStatus(ctx, addon.ID, "failed", "")
-		return nil, apierr.New(502, fmt.Sprintf("payment gateway error: %s", err.Error()))
-	}
 
-	_ = s.store.UpdateAddonStatus(ctx, addon.ID, remote.Status, remote.ID)
-	addon.AdullamID = remote.ID
-	addon.Status = remote.Status
+	if provider == "adullam" {
+		remote, err := s.adullam.CreatePayment(ctx, addon.ID.String(), adullam.CreatePaymentInput{
+			Amount:        pkg.PriceXOF,
+			Currency:      "xof",
+			CustomerPhone: req.Phone,
+			Channel:       adullamChannel(req.Channel),
+			Description:   desc,
+		})
+		if err != nil {
+			_ = s.store.UpdateAddonStatus(ctx, addon.ID, "failed", "")
+			return nil, apierr.New(502, fmt.Sprintf("payment gateway error: %s", err.Error()))
+		}
+		_ = s.store.UpdateAddonStatus(ctx, addon.ID, remote.Status, remote.ID)
+		addon.AdullamID = remote.ID
+		addon.Status = remote.Status
+	} else {
+		name, email, err := s.getUserInfo(ctx, userID)
+		if err != nil {
+			return nil, fmt.Errorf("getUserInfo: %w", err)
+		}
+		firstName, lastName := splitName(name)
+		remote, err := s.saspay.CreatePayment(ctx, addon.ID.String(), saspay.CreateSoftpayInput{
+			Amount:      fmt.Sprintf("%.2f", float64(pkg.PriceXOF)),
+			Currency:    currencyForCountry(req.CountryCode),
+			Country:     req.CountryCode,
+			Customer:    saspay.Customer{Email: email, FirstName: firstName, LastName: lastName, Phone: req.Phone},
+			Network:     req.Channel,
+			Description: desc,
+		})
+		if err != nil {
+			_ = s.store.UpdateAddonStatus(ctx, addon.ID, "failed", "")
+			return nil, apierr.New(502, fmt.Sprintf("payment gateway error: %s", err.Error()))
+		}
+		normalised := saspay.NormaliseStatus(remote.Status)
+		_ = s.store.UpdateAddonStatus(ctx, addon.ID, normalised, remote.ID)
+		addon.AdullamID = remote.ID
+		addon.Status = normalised
+	}
 	return addon, nil
 }
 
@@ -357,25 +468,46 @@ func (s *Service) GetAddonStatus(ctx context.Context, userID, addonID uuid.UUID)
 	if a == nil || a.UserID != userID {
 		return nil, apierr.ErrNotFound
 	}
-
 	if isTerminal(a.Status) || a.AdullamID == "" {
 		return a, nil
 	}
 
-	remote, err := s.adullam.GetPayment(ctx, a.AdullamID)
-	if err != nil {
-		log.Printf("[billing] addon poll error id=%s: %v", a.ID, err)
-		return a, nil
-	}
-
-	if remote.Status != a.Status {
-		_ = s.store.UpdateAddonStatus(ctx, addonID, remote.Status, remote.ID)
-		a.Status = remote.Status
-	}
-
-	if a.Status == "completed" {
-		if err := s.activateAddon(ctx, a); err != nil {
-			return nil, err
+	if a.Provider == "saspay" {
+		remote, err := s.saspay.GetPayment(ctx, a.AdullamID)
+		if err != nil {
+			log.Printf("[billing] saspay addon poll error id=%s: %v", a.ID, err)
+			return a, nil
+		}
+		normalised := saspay.NormaliseStatus(remote.Status)
+		if normalised != a.Status {
+			_ = s.store.UpdateAddonStatus(ctx, addonID, normalised, remote.ID)
+			a.Status = normalised
+		}
+		if normalised == "failed" && remote.FailureReason != "" {
+			a.FailureReason = remote.FailureReason
+		}
+		if a.Status == "completed" {
+			if err := s.activateAddon(ctx, a); err != nil {
+				return nil, err
+			}
+		}
+	} else {
+		remote, err := s.adullam.GetPayment(ctx, a.AdullamID)
+		if err != nil {
+			log.Printf("[billing] addon poll error id=%s: %v", a.ID, err)
+			return a, nil
+		}
+		if remote.Status != a.Status {
+			_ = s.store.UpdateAddonStatus(ctx, addonID, remote.Status, remote.ID)
+			a.Status = remote.Status
+		}
+		if remote.Status == "failed" && remote.FailedReason != "" {
+			a.FailureReason = remote.FailedReason
+		}
+		if a.Status == "completed" {
+			if err := s.activateAddon(ctx, a); err != nil {
+				return nil, err
+			}
 		}
 	}
 	return a, nil
@@ -398,7 +530,6 @@ func (s *Service) activateAddon(ctx context.Context, addon *StorageAddon) error 
 			baseBytes = free.StorageBytes
 		}
 	}
-	// SumCompletedAddonBytes includes the just-activated addon (already marked completed)
 	addonTotal, err := s.store.SumCompletedAddonBytes(ctx, addon.UserID)
 	if err != nil {
 		return err
@@ -436,10 +567,51 @@ func (s *Service) sendAddonEmail(addon *StorageAddon) {
 	}
 }
 
+// ── helpers ──────────────────────────────────────────────────────────────────
+
 func isTerminal(status string) bool {
 	switch status {
 	case "completed", "failed", "expired":
 		return true
 	}
 	return false
+}
+
+// adullamChannel translates our normalised snake_case slug to the code Adullam
+// expects. Adullam CI channels use the old camelCase+uppercase-country format
+// (waveCI, mtnCI, ...) while all other country slugs are already accepted as-is.
+var adullamChannelMap = map[string]string{
+	"mtn_ci":    "mtnCI",
+	"wave_ci":   "waveCI",
+	"moov_ci":   "moovCI",
+	"orange_ci": "orangeCI",
+}
+
+func adullamChannel(slug string) string {
+	if code, ok := adullamChannelMap[slug]; ok {
+		return code
+	}
+	return slug
+}
+
+func currencyForCountry(code string) string {
+	switch code {
+	case "CM", "GA", "CG", "CF", "TD", "GQ":
+		return "XAF"
+	case "GN":
+		return "GNF"
+	default:
+		return "XOF"
+	}
+}
+
+func splitName(name string) (firstName, lastName string) {
+	parts := strings.Fields(name)
+	if len(parts) == 0 {
+		return "User", "User"
+	}
+	if len(parts) == 1 {
+		return parts[0], parts[0]
+	}
+	return parts[0], strings.Join(parts[1:], " ")
 }

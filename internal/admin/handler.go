@@ -85,6 +85,8 @@ func (h *Handler) Routes(superAdminMW func(http.Handler) http.Handler) chi.Route
 		// Billing management
 		r.Get("/billing/plans", h.listPlans)
 		r.Patch("/billing/plans/{id}", h.updatePlan)
+		r.Get("/billing/countries", h.listBillingCountries)
+		r.Patch("/billing/countries/{code}", h.updateBillingCountry)
 		r.Get("/billing/channels", h.listAllChannels)
 		r.Post("/billing/channels", h.createChannel)
 		r.Patch("/billing/channels/{id}", h.updateChannel)
@@ -411,6 +413,60 @@ func (h *Handler) updatePlan(w http.ResponseWriter, r *http.Request) {
 	response.NoContent(w)
 }
 
+// ── Billing — Countries ──────────────────────────────────────────────────────
+
+func (h *Handler) listBillingCountries(w http.ResponseWriter, r *http.Request) {
+	rows, err := h.db.Query(r.Context(),
+		`SELECT code, name, currency_code, currency_symbol, CAST(local_per_xof AS float8), flag_emoji, is_active
+		 FROM billing_countries ORDER BY name ASC`)
+	if err != nil {
+		response.Error(w, err)
+		return
+	}
+	defer rows.Close()
+	type countryRow struct {
+		Code           string  `json:"code"`
+		Name           string  `json:"name"`
+		CurrencyCode   string  `json:"currency_code"`
+		CurrencySymbol string  `json:"currency_symbol"`
+		LocalPerXOF    float64 `json:"local_per_xof"`
+		FlagEmoji      string  `json:"flag_emoji"`
+		IsActive       bool    `json:"is_active"`
+	}
+	var list []countryRow
+	for rows.Next() {
+		var c countryRow
+		if err := rows.Scan(&c.Code, &c.Name, &c.CurrencyCode, &c.CurrencySymbol, &c.LocalPerXOF, &c.FlagEmoji, &c.IsActive); err != nil {
+			response.Error(w, err)
+			return
+		}
+		list = append(list, c)
+	}
+	if list == nil {
+		list = []countryRow{}
+	}
+	response.OK(w, list)
+}
+
+func (h *Handler) updateBillingCountry(w http.ResponseWriter, r *http.Request) {
+	code := chi.URLParam(r, "code")
+	var req struct {
+		IsActive    *bool    `json:"is_active"`
+		LocalPerXOF *float64 `json:"local_per_xof"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response.Error(w, apierr.ErrBadRequest("invalid JSON"))
+		return
+	}
+	if req.IsActive != nil {
+		h.db.Exec(r.Context(), `UPDATE billing_countries SET is_active=$2 WHERE code=$1`, code, *req.IsActive)
+	}
+	if req.LocalPerXOF != nil {
+		h.db.Exec(r.Context(), `UPDATE billing_countries SET local_per_xof=$2 WHERE code=$1`, code, *req.LocalPerXOF)
+	}
+	response.NoContent(w)
+}
+
 // ── Billing — Channels ───────────────────────────────────────────────────────
 
 type channelRow struct {
@@ -421,12 +477,25 @@ type channelRow struct {
 	IsActive        bool   `json:"is_active"`
 	MaintenanceNote string `json:"maintenance_note"`
 	DisplayOrder    int    `json:"display_order"`
+	CountryCode     string `json:"country_code"`
+	Provider        string `json:"provider"`
 }
 
 func (h *Handler) listAllChannels(w http.ResponseWriter, r *http.Request) {
-	rows, err := h.db.Query(r.Context(),
-		`SELECT id, name, slug, COALESCE(logo_url,''), is_active, COALESCE(maintenance_note,''), display_order
-		 FROM payment_channels ORDER BY display_order ASC, name ASC`)
+	country := r.URL.Query().Get("country")
+	var rows interface{ Next() bool; Scan(...any) error; Close(); Err() error }
+	var err error
+	if country != "" {
+		rows, err = h.db.Query(r.Context(),
+			`SELECT id, name, slug, COALESCE(logo_url,''), is_active, COALESCE(maintenance_note,''), display_order,
+			        COALESCE(country_code,'CI'), COALESCE(provider,'adullam')
+			 FROM payment_channels WHERE country_code = $1 ORDER BY display_order ASC, name ASC`, country)
+	} else {
+		rows, err = h.db.Query(r.Context(),
+			`SELECT id, name, slug, COALESCE(logo_url,''), is_active, COALESCE(maintenance_note,''), display_order,
+			        COALESCE(country_code,'CI'), COALESCE(provider,'adullam')
+			 FROM payment_channels ORDER BY country_code ASC, display_order ASC, name ASC`)
+	}
 	if err != nil {
 		response.Error(w, err)
 		return
@@ -435,7 +504,7 @@ func (h *Handler) listAllChannels(w http.ResponseWriter, r *http.Request) {
 	var list []channelRow
 	for rows.Next() {
 		var c channelRow
-		if err := rows.Scan(&c.ID, &c.Name, &c.Slug, &c.LogoURL, &c.IsActive, &c.MaintenanceNote, &c.DisplayOrder); err != nil {
+		if err := rows.Scan(&c.ID, &c.Name, &c.Slug, &c.LogoURL, &c.IsActive, &c.MaintenanceNote, &c.DisplayOrder, &c.CountryCode, &c.Provider); err != nil {
 			response.Error(w, err)
 			return
 		}
@@ -454,16 +523,43 @@ func (h *Handler) createChannel(w http.ResponseWriter, r *http.Request) {
 		Slug         string `json:"slug"`
 		LogoURL      string `json:"logo_url"`
 		DisplayOrder int    `json:"display_order"`
+		CountryCode  string `json:"country_code"`
+		Provider     string `json:"provider"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" || req.Slug == "" {
 		response.Error(w, apierr.ErrBadRequest("name and slug are required"))
 		return
 	}
+	if req.CountryCode == "" {
+		req.CountryCode = "CI"
+	}
+	if req.Provider == "" {
+		if req.CountryCode == "CI" {
+			req.Provider = "adullam"
+		} else {
+			req.Provider = "saspay"
+		}
+	}
+	// Auto-inherit logo from any channel sharing the same network base slug
+	if req.LogoURL == "" && len(req.Slug) > 3 {
+		var inherited string
+		h.db.QueryRow(r.Context(),
+			`SELECT COALESCE(logo_url,'') FROM payment_channels
+			 WHERE logo_url IS NOT NULL
+			   AND LEFT(slug, LENGTH(slug)-3) = LEFT($1, LENGTH($1)-3)
+			 LIMIT 1`,
+			req.Slug,
+		).Scan(&inherited)
+		if inherited != "" {
+			req.LogoURL = inherited
+		}
+	}
+
 	id := uuid.New()
 	_, err := h.db.Exec(r.Context(),
-		`INSERT INTO payment_channels (id, name, slug, logo_url, is_active, display_order, created_at, updated_at)
-		 VALUES ($1,$2,$3,NULLIF($4,''),true,$5,now(),now())`,
-		id, req.Name, req.Slug, req.LogoURL, req.DisplayOrder,
+		`INSERT INTO payment_channels (id, name, slug, logo_url, is_active, display_order, country_code, provider, created_at, updated_at)
+		 VALUES ($1,$2,$3,NULLIF($4,''),true,$5,$6,$7,now(),now())`,
+		id, req.Name, req.Slug, req.LogoURL, req.DisplayOrder, req.CountryCode, req.Provider,
 	)
 	if err != nil {
 		response.Error(w, err)
@@ -486,6 +582,8 @@ func (h *Handler) updateChannel(w http.ResponseWriter, r *http.Request) {
 		IsActive        *bool   `json:"is_active"`
 		MaintenanceNote *string `json:"maintenance_note"`
 		DisplayOrder    *int    `json:"display_order"`
+		CountryCode     *string `json:"country_code"`
+		Provider        *string `json:"provider"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		response.Error(w, apierr.ErrBadRequest("invalid JSON"))
@@ -496,6 +594,14 @@ func (h *Handler) updateChannel(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.LogoURL != nil {
 		h.db.Exec(r.Context(), `UPDATE payment_channels SET logo_url=NULLIF($2,''), updated_at=now() WHERE id=$1`, id, *req.LogoURL)
+		// Propagate logo to all channels sharing the same network base slug (e.g. orange_ci → orange_*)
+		h.db.Exec(r.Context(), `
+			UPDATE payment_channels SET logo_url=NULLIF($2,''), updated_at=now()
+			WHERE id != $1
+			  AND logo_url IS DISTINCT FROM NULLIF($2,'')
+			  AND LEFT(slug, LENGTH(slug)-3) = (
+			        SELECT LEFT(slug, LENGTH(slug)-3) FROM payment_channels WHERE id=$1
+			      )`, id, *req.LogoURL)
 	}
 	if req.IsActive != nil {
 		h.db.Exec(r.Context(), `UPDATE payment_channels SET is_active=$2, updated_at=now() WHERE id=$1`, id, *req.IsActive)
@@ -505,6 +611,12 @@ func (h *Handler) updateChannel(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.DisplayOrder != nil {
 		h.db.Exec(r.Context(), `UPDATE payment_channels SET display_order=$2, updated_at=now() WHERE id=$1`, id, *req.DisplayOrder)
+	}
+	if req.CountryCode != nil {
+		h.db.Exec(r.Context(), `UPDATE payment_channels SET country_code=$2, updated_at=now() WHERE id=$1`, id, *req.CountryCode)
+	}
+	if req.Provider != nil {
+		h.db.Exec(r.Context(), `UPDATE payment_channels SET provider=$2, updated_at=now() WHERE id=$1`, id, *req.Provider)
 	}
 	h.log.Async(actorID, "admin.billing.channel.update", "channel", id.String())
 	response.NoContent(w)
@@ -560,6 +672,14 @@ func (h *Handler) uploadChannelLogo(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, err)
 		return
 	}
+	// Propagate logo to all channels sharing the same network base slug
+	h.db.Exec(r.Context(), `
+		UPDATE payment_channels SET logo_url=$2, updated_at=now()
+		WHERE id != $1
+		  AND logo_url IS DISTINCT FROM $2
+		  AND LEFT(slug, LENGTH(slug)-3) = (
+		        SELECT LEFT(slug, LENGTH(slug)-3) FROM payment_channels WHERE id=$1
+		      )`, id, logoURL)
 	h.log.Async(actorID, "admin.billing.channel.logo", "channel", id.String())
 	response.OK(w, map[string]string{"logo_url": logoURL})
 }

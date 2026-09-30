@@ -11,6 +11,9 @@ import (
 )
 
 type Store interface {
+	ListCountries(ctx context.Context) ([]Country, error)
+	ListActiveCountries(ctx context.Context) ([]Country, error)
+	UpdateCountry(ctx context.Context, code string, isActive bool, localPerXOF float64) error
 	ListPlans(ctx context.Context) ([]Plan, error)
 	GetPlanByID(ctx context.Context, id uuid.UUID) (*Plan, error)
 	GetPlanBySlug(ctx context.Context, slug string) (*Plan, error)
@@ -20,14 +23,16 @@ type Store interface {
 	CreatePayment(ctx context.Context, p *BillingPayment) error
 	GetPayment(ctx context.Context, id uuid.UUID) (*BillingPayment, error)
 	GetPaymentByAdullamID(ctx context.Context, adullamID string) (*BillingPayment, error)
+	GetPaymentByGatewayID(ctx context.Context, gatewayID, provider string) (*BillingPayment, error)
 	UpdatePaymentStatus(ctx context.Context, id uuid.UUID, status, adullamID string) error
 	SetPaymentRedirectURL(ctx context.Context, id uuid.UUID, url string) error
 	ListUserPayments(ctx context.Context, userID uuid.UUID) ([]BillingPayment, error)
-	IsActiveChannel(ctx context.Context, slug string) (bool, error)
+	GetChannelInfo(ctx context.Context, slug string) (active bool, provider string, err error)
 	// Add-ons
 	CreateAddon(ctx context.Context, a *StorageAddon) error
 	GetAddon(ctx context.Context, id uuid.UUID) (*StorageAddon, error)
 	GetAddonByAdullamID(ctx context.Context, adullamID string) (*StorageAddon, error)
+	GetAddonByGatewayID(ctx context.Context, gatewayID, provider string) (*StorageAddon, error)
 	UpdateAddonStatus(ctx context.Context, id uuid.UUID, status, adullamID string) error
 	ListUserAddons(ctx context.Context, userID uuid.UUID) ([]StorageAddon, error)
 	SumCompletedAddonBytes(ctx context.Context, userID uuid.UUID) (int64, error)
@@ -36,6 +41,55 @@ type Store interface {
 type pgStore struct{ db *pgxpool.Pool }
 
 func NewStore(db *pgxpool.Pool) Store { return &pgStore{db} }
+
+// ── Countries ────────────────────────────────────────────────────────────────
+
+func (s *pgStore) ListCountries(ctx context.Context) ([]Country, error) {
+	rows, err := s.db.Query(ctx,
+		`SELECT code, name, currency_code, currency_symbol, CAST(local_per_xof AS float8), flag_emoji, is_active
+		 FROM billing_countries ORDER BY name ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []Country
+	for rows.Next() {
+		var c Country
+		if err := rows.Scan(&c.Code, &c.Name, &c.CurrencyCode, &c.CurrencySymbol, &c.LocalPerXOF, &c.FlagEmoji, &c.IsActive); err != nil {
+			return nil, err
+		}
+		list = append(list, c)
+	}
+	return list, rows.Err()
+}
+
+func (s *pgStore) ListActiveCountries(ctx context.Context) ([]Country, error) {
+	rows, err := s.db.Query(ctx,
+		`SELECT code, name, currency_code, currency_symbol, CAST(local_per_xof AS float8), flag_emoji, is_active
+		 FROM billing_countries WHERE is_active = true AND code != 'INT' ORDER BY name ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []Country
+	for rows.Next() {
+		var c Country
+		if err := rows.Scan(&c.Code, &c.Name, &c.CurrencyCode, &c.CurrencySymbol, &c.LocalPerXOF, &c.FlagEmoji, &c.IsActive); err != nil {
+			return nil, err
+		}
+		list = append(list, c)
+	}
+	return list, rows.Err()
+}
+
+func (s *pgStore) UpdateCountry(ctx context.Context, code string, isActive bool, localPerXOF float64) error {
+	_, err := s.db.Exec(ctx,
+		`UPDATE billing_countries SET is_active=$2, local_per_xof=$3 WHERE code=$1`,
+		code, isActive, localPerXOF)
+	return err
+}
+
+// ── Plans ────────────────────────────────────────────────────────────────────
 
 func (s *pgStore) ListPlans(ctx context.Context) ([]Plan, error) {
 	rows, err := s.db.Query(ctx,
@@ -77,6 +131,8 @@ func (s *pgStore) GetPlanBySlug(ctx context.Context, slug string) (*Plan, error)
 	}
 	return p, err
 }
+
+// ── Subscriptions ────────────────────────────────────────────────────────────
 
 func (s *pgStore) GetSubscription(ctx context.Context, userID uuid.UUID) (*Subscription, error) {
 	sub := &Subscription{}
@@ -131,27 +187,24 @@ func (s *pgStore) UpsertSubscription(ctx context.Context, userID, planID uuid.UU
 	return err
 }
 
+// ── Payments ─────────────────────────────────────────────────────────────────
+
 func (s *pgStore) CreatePayment(ctx context.Context, p *BillingPayment) error {
 	_, err := s.db.Exec(ctx,
-		`INSERT INTO billing_payments (id, user_id, plan_id, adullam_id, amount_xof, status, channel, phone, redirect_url, created_at, updated_at)
-		 VALUES ($1, $2, $3, NULL, $4, $5, $6, $7, NULLIF($8,''), now(), now())`,
-		p.ID, p.UserID, p.PlanID, p.AmountXOF, p.Status, p.Channel, p.Phone, p.RedirectURL,
+		`INSERT INTO billing_payments (id, user_id, plan_id, adullam_id, amount_xof, fee_xof, status, channel, phone, redirect_url, provider, country_code, created_at, updated_at)
+		 VALUES ($1, $2, $3, NULL, $4, $5, $6, $7, $8, NULLIF($9,''), $10, $11, now(), now())`,
+		p.ID, p.UserID, p.PlanID, p.AmountXOF, p.FeeXOF, p.Status, p.Channel, p.Phone, p.RedirectURL, p.Provider, p.CountryCode,
 	)
 	return err
 }
 
-func (s *pgStore) GetPayment(ctx context.Context, id uuid.UUID) (*BillingPayment, error) {
+func scanPayment(row pgx.Row) (*BillingPayment, error) {
 	p := &BillingPayment{}
 	plan := &Plan{}
-	err := s.db.QueryRow(ctx,
-		`SELECT bp.id, bp.user_id, bp.plan_id, COALESCE(bp.adullam_id, ''),
-		        bp.amount_xof, bp.status, bp.channel, bp.phone, COALESCE(bp.redirect_url, ''), bp.created_at, bp.updated_at,
-		        pl.id, pl.name, pl.slug, pl.storage_bytes, pl.price_xof, pl.max_projects, pl.max_file_bytes, pl.addons_enabled, pl.is_active
-		 FROM billing_payments bp JOIN plans pl ON pl.id = bp.plan_id
-		 WHERE bp.id = $1`, id,
-	).Scan(
+	err := row.Scan(
 		&p.ID, &p.UserID, &p.PlanID, &p.AdullamID,
-		&p.AmountXOF, &p.Status, &p.Channel, &p.Phone, &p.RedirectURL, &p.CreatedAt, &p.UpdatedAt,
+		&p.AmountXOF, &p.FeeXOF, &p.Status, &p.Channel, &p.Phone, &p.RedirectURL, &p.Provider, &p.CountryCode,
+		&p.CreatedAt, &p.UpdatedAt,
 		&plan.ID, &plan.Name, &plan.Slug, &plan.StorageBytes, &plan.PriceXOF, &plan.MaxProjects, &plan.MaxFileBytes, &plan.AddonsEnabled, &plan.IsActive,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -164,28 +217,24 @@ func (s *pgStore) GetPayment(ctx context.Context, id uuid.UUID) (*BillingPayment
 	return p, nil
 }
 
+const paymentSelectJoin = `
+	SELECT bp.id, bp.user_id, bp.plan_id, COALESCE(bp.adullam_id, ''),
+	       bp.amount_xof, COALESCE(bp.fee_xof, 0), bp.status, bp.channel, bp.phone, COALESCE(bp.redirect_url, ''),
+	       COALESCE(bp.provider,'adullam'), COALESCE(bp.country_code,'CI'),
+	       bp.created_at, bp.updated_at,
+	       pl.id, pl.name, pl.slug, pl.storage_bytes, pl.price_xof, pl.max_projects, pl.max_file_bytes, pl.addons_enabled, pl.is_active
+	FROM billing_payments bp JOIN plans pl ON pl.id = bp.plan_id`
+
+func (s *pgStore) GetPayment(ctx context.Context, id uuid.UUID) (*BillingPayment, error) {
+	return scanPayment(s.db.QueryRow(ctx, paymentSelectJoin+` WHERE bp.id = $1`, id))
+}
+
 func (s *pgStore) GetPaymentByAdullamID(ctx context.Context, adullamID string) (*BillingPayment, error) {
-	p := &BillingPayment{}
-	plan := &Plan{}
-	err := s.db.QueryRow(ctx,
-		`SELECT bp.id, bp.user_id, bp.plan_id, COALESCE(bp.adullam_id, ''),
-		        bp.amount_xof, bp.status, bp.channel, bp.phone, bp.created_at, bp.updated_at,
-		        pl.id, pl.name, pl.slug, pl.storage_bytes, pl.price_xof, pl.max_projects, pl.max_file_bytes, pl.addons_enabled, pl.is_active
-		 FROM billing_payments bp JOIN plans pl ON pl.id = bp.plan_id
-		 WHERE bp.adullam_id = $1`, adullamID,
-	).Scan(
-		&p.ID, &p.UserID, &p.PlanID, &p.AdullamID,
-		&p.AmountXOF, &p.Status, &p.Channel, &p.Phone, &p.CreatedAt, &p.UpdatedAt,
-		&plan.ID, &plan.Name, &plan.Slug, &plan.StorageBytes, &plan.PriceXOF, &plan.MaxProjects, &plan.MaxFileBytes, &plan.AddonsEnabled, &plan.IsActive,
-	)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	p.Plan = plan
-	return p, nil
+	return scanPayment(s.db.QueryRow(ctx, paymentSelectJoin+` WHERE bp.adullam_id = $1 AND COALESCE(bp.provider,'adullam') = 'adullam'`, adullamID))
+}
+
+func (s *pgStore) GetPaymentByGatewayID(ctx context.Context, gatewayID, provider string) (*BillingPayment, error) {
+	return scanPayment(s.db.QueryRow(ctx, paymentSelectJoin+` WHERE bp.adullam_id = $1 AND COALESCE(bp.provider,'adullam') = $2`, gatewayID, provider))
 }
 
 func (s *pgStore) UpdatePaymentStatus(ctx context.Context, id uuid.UUID, status, adullamID string) error {
@@ -206,11 +255,7 @@ func (s *pgStore) SetPaymentRedirectURL(ctx context.Context, id uuid.UUID, url s
 
 func (s *pgStore) ListUserPayments(ctx context.Context, userID uuid.UUID) ([]BillingPayment, error) {
 	rows, err := s.db.Query(ctx,
-		`SELECT bp.id, bp.user_id, bp.plan_id, COALESCE(bp.adullam_id, ''),
-		        bp.amount_xof, bp.status, bp.channel, bp.phone, bp.created_at, bp.updated_at,
-		        pl.id, pl.name, pl.slug, pl.storage_bytes, pl.price_xof, pl.max_projects, pl.max_file_bytes, pl.addons_enabled, pl.is_active
-		 FROM billing_payments bp JOIN plans pl ON pl.id = bp.plan_id
-		 WHERE bp.user_id = $1 ORDER BY bp.created_at DESC LIMIT 20`, userID)
+		paymentSelectJoin+` WHERE bp.user_id = $1 ORDER BY bp.created_at DESC LIMIT 20`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -221,7 +266,8 @@ func (s *pgStore) ListUserPayments(ctx context.Context, userID uuid.UUID) ([]Bil
 		var plan Plan
 		if err := rows.Scan(
 			&p.ID, &p.UserID, &p.PlanID, &p.AdullamID,
-			&p.AmountXOF, &p.Status, &p.Channel, &p.Phone, &p.CreatedAt, &p.UpdatedAt,
+			&p.AmountXOF, &p.FeeXOF, &p.Status, &p.Channel, &p.Phone, &p.RedirectURL, &p.Provider, &p.CountryCode,
+			&p.CreatedAt, &p.UpdatedAt,
 			&plan.ID, &plan.Name, &plan.Slug, &plan.StorageBytes, &plan.PriceXOF, &plan.MaxProjects, &plan.MaxFileBytes, &plan.AddonsEnabled, &plan.IsActive,
 		); err != nil {
 			return nil, err
@@ -232,13 +278,25 @@ func (s *pgStore) ListUserPayments(ctx context.Context, userID uuid.UUID) ([]Bil
 	return payments, rows.Err()
 }
 
+func (s *pgStore) GetChannelInfo(ctx context.Context, slug string) (bool, string, error) {
+	var active bool
+	var provider string
+	err := s.db.QueryRow(ctx,
+		`SELECT is_active, provider FROM payment_channels WHERE slug = $1`, slug,
+	).Scan(&active, &provider)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, "", nil
+	}
+	return active, provider, err
+}
+
 // ── Add-on implementations ───────────────────────────────────────────────────
 
 func (s *pgStore) CreateAddon(ctx context.Context, a *StorageAddon) error {
 	_, err := s.db.Exec(ctx,
-		`INSERT INTO storage_addons (id, user_id, package_id, bytes, price_xof, adullam_id, status, channel, phone, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, NULL, $6, $7, $8, now(), now())`,
-		a.ID, a.UserID, a.PackageID, a.Bytes, a.PriceXOF, a.Status, a.Channel, a.Phone,
+		`INSERT INTO storage_addons (id, user_id, package_id, bytes, price_xof, fee_xof, adullam_id, status, channel, phone, provider, country_code, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, NULL, $7, $8, $9, $10, $11, now(), now())`,
+		a.ID, a.UserID, a.PackageID, a.Bytes, a.PriceXOF, a.FeeXOF, a.Status, a.Channel, a.Phone, a.Provider, a.CountryCode,
 	)
 	return err
 }
@@ -246,9 +304,11 @@ func (s *pgStore) CreateAddon(ctx context.Context, a *StorageAddon) error {
 func (s *pgStore) GetAddon(ctx context.Context, id uuid.UUID) (*StorageAddon, error) {
 	a := &StorageAddon{}
 	err := s.db.QueryRow(ctx,
-		`SELECT id, user_id, package_id, bytes, price_xof, COALESCE(adullam_id,''), status, channel, phone, created_at, updated_at
+		`SELECT id, user_id, package_id, bytes, price_xof, COALESCE(fee_xof,0), COALESCE(adullam_id,''), status, channel, phone,
+		        COALESCE(provider,'adullam'), COALESCE(country_code,'CI'), created_at, updated_at
 		 FROM storage_addons WHERE id = $1`, id,
-	).Scan(&a.ID, &a.UserID, &a.PackageID, &a.Bytes, &a.PriceXOF, &a.AdullamID, &a.Status, &a.Channel, &a.Phone, &a.CreatedAt, &a.UpdatedAt)
+	).Scan(&a.ID, &a.UserID, &a.PackageID, &a.Bytes, &a.PriceXOF, &a.FeeXOF, &a.AdullamID, &a.Status, &a.Channel, &a.Phone,
+		&a.Provider, &a.CountryCode, &a.CreatedAt, &a.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -258,9 +318,25 @@ func (s *pgStore) GetAddon(ctx context.Context, id uuid.UUID) (*StorageAddon, er
 func (s *pgStore) GetAddonByAdullamID(ctx context.Context, adullamID string) (*StorageAddon, error) {
 	a := &StorageAddon{}
 	err := s.db.QueryRow(ctx,
-		`SELECT id, user_id, package_id, bytes, price_xof, COALESCE(adullam_id,''), status, channel, phone, created_at, updated_at
-		 FROM storage_addons WHERE adullam_id = $1`, adullamID,
-	).Scan(&a.ID, &a.UserID, &a.PackageID, &a.Bytes, &a.PriceXOF, &a.AdullamID, &a.Status, &a.Channel, &a.Phone, &a.CreatedAt, &a.UpdatedAt)
+		`SELECT id, user_id, package_id, bytes, price_xof, COALESCE(fee_xof,0), COALESCE(adullam_id,''), status, channel, phone,
+		        COALESCE(provider,'adullam'), COALESCE(country_code,'CI'), created_at, updated_at
+		 FROM storage_addons WHERE adullam_id = $1 AND COALESCE(provider,'adullam') = 'adullam'`, adullamID,
+	).Scan(&a.ID, &a.UserID, &a.PackageID, &a.Bytes, &a.PriceXOF, &a.FeeXOF, &a.AdullamID, &a.Status, &a.Channel, &a.Phone,
+		&a.Provider, &a.CountryCode, &a.CreatedAt, &a.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	return a, err
+}
+
+func (s *pgStore) GetAddonByGatewayID(ctx context.Context, gatewayID, provider string) (*StorageAddon, error) {
+	a := &StorageAddon{}
+	err := s.db.QueryRow(ctx,
+		`SELECT id, user_id, package_id, bytes, price_xof, COALESCE(fee_xof,0), COALESCE(adullam_id,''), status, channel, phone,
+		        COALESCE(provider,'adullam'), COALESCE(country_code,'CI'), created_at, updated_at
+		 FROM storage_addons WHERE adullam_id = $1 AND COALESCE(provider,'adullam') = $2`, gatewayID, provider,
+	).Scan(&a.ID, &a.UserID, &a.PackageID, &a.Bytes, &a.PriceXOF, &a.FeeXOF, &a.AdullamID, &a.Status, &a.Channel, &a.Phone,
+		&a.Provider, &a.CountryCode, &a.CreatedAt, &a.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -277,7 +353,8 @@ func (s *pgStore) UpdateAddonStatus(ctx context.Context, id uuid.UUID, status, a
 
 func (s *pgStore) ListUserAddons(ctx context.Context, userID uuid.UUID) ([]StorageAddon, error) {
 	rows, err := s.db.Query(ctx,
-		`SELECT id, user_id, package_id, bytes, price_xof, COALESCE(adullam_id,''), status, channel, phone, created_at, updated_at
+		`SELECT id, user_id, package_id, bytes, price_xof, COALESCE(fee_xof,0), COALESCE(adullam_id,''), status, channel, phone,
+		        COALESCE(provider,'adullam'), COALESCE(country_code,'CI'), created_at, updated_at
 		 FROM storage_addons WHERE user_id = $1 ORDER BY created_at DESC LIMIT 50`, userID)
 	if err != nil {
 		return nil, err
@@ -286,23 +363,13 @@ func (s *pgStore) ListUserAddons(ctx context.Context, userID uuid.UUID) ([]Stora
 	var addons []StorageAddon
 	for rows.Next() {
 		var a StorageAddon
-		if err := rows.Scan(&a.ID, &a.UserID, &a.PackageID, &a.Bytes, &a.PriceXOF, &a.AdullamID, &a.Status, &a.Channel, &a.Phone, &a.CreatedAt, &a.UpdatedAt); err != nil {
+		if err := rows.Scan(&a.ID, &a.UserID, &a.PackageID, &a.Bytes, &a.PriceXOF, &a.FeeXOF, &a.AdullamID, &a.Status, &a.Channel, &a.Phone,
+			&a.Provider, &a.CountryCode, &a.CreatedAt, &a.UpdatedAt); err != nil {
 			return nil, err
 		}
 		addons = append(addons, a)
 	}
 	return addons, rows.Err()
-}
-
-func (s *pgStore) IsActiveChannel(ctx context.Context, slug string) (bool, error) {
-	var active bool
-	err := s.db.QueryRow(ctx,
-		`SELECT is_active FROM payment_channels WHERE slug = $1`, slug,
-	).Scan(&active)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil
-	}
-	return active, err
 }
 
 func (s *pgStore) SumCompletedAddonBytes(ctx context.Context, userID uuid.UUID) (int64, error) {
