@@ -5,6 +5,26 @@ Format: `[version] — date — description`
 
 ---
 
+## [0.7.0] — 2026-09 — SasPay multi-pays & expansion canaux
+
+### Added
+- **`pkg/saspay/client.go`** — intégration SasPay : nouveau provider Mobile Money couvrant les pays hors Côte d'Ivoire (Sénégal, Mali, Burkina Faso, etc.)
+- **Multi-provider billing** — `billing/service.go` supporte désormais Adullam (CI) et SasPay (autres pays) de façon transparente selon le canal sélectionné
+- **Migration 025** (`025_saspay_multicountry.sql`) — colonnes `provider`, `country_code`, `phone_prefix` sur `payment_channels`
+- **Migration 026** (`026_channels_expansion.sql`) — nouveaux canaux seedés pour le Sénégal, Mali, Burkina Faso (Wave, Orange Money, Free Money, MTN MoMo selon les pays)
+- **Migration 027** (`027_fee_xof.sql`) — colonne `fee_xof` sur les transactions de paiement
+- **Config** — variables `SASPAY_API_KEY` et `SASPAY_WEBHOOK_SECRET` dans `pkg/config/config.go`
+- **`.env.example`** — section SasPay documentée
+
+### Changed
+- `billing/model.go` — modèles enrichis : `PaymentChannel` porte `provider`, `country_code`, `phone_prefix`
+- `billing/store.go` — requêtes adaptées aux nouvelles colonnes (provider, fee_xof)
+- `billing/handler.go` — routing du checkout selon le provider du canal (Adullam vs SasPay)
+- `billing/service.go` — refactoring : logique checkout extraite par provider, support webhook SasPay
+- `internal/admin/handler.go` — nouvelles routes de gestion billing admin (création/édition canaux enrichie)
+
+---
+
 ## [0.6.2] — 2026-09 — Corrections de sécurité
 
 ### Fixed
@@ -124,7 +144,7 @@ Format: `[version] — date — description`
 
 ---
 
-## État actuel — v0.6.2
+## État actuel — v0.7.0
 
 ### Fonctionnel
 - Auth complète (JWT, email verification, reset password)

@@ -39,8 +39,10 @@ Copy `.env.example` to `.env` and fill in your values.
 | `MAILJET_SECRET_KEY` | — | Mailjet secret key |
 | `MAIL_FROM` | — | Sender email address |
 | `MAIL_FROM_NAME` | — | Sender display name (default: `NEXIUM Storage`) |
-| `ADULLAM_API_KEY` | — | Adullam payment gateway API key |
+| `ADULLAM_API_KEY` | — | Adullam payment gateway API key (Mobile Money — Côte d'Ivoire) |
 | `ADULLAM_WEBHOOK_SECRET` | ✓ | Adullam webhook HMAC secret — **required in production** : if unset, all webhook requests are rejected (fail-closed) |
+| `SASPAY_API_KEY` | — | SasPay payment gateway API key (Mobile Money — Sénégal, Mali, Burkina Faso, etc.) |
+| `SASPAY_WEBHOOK_SECRET` | — | SasPay webhook HMAC secret |
 
 ---
 
