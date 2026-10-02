@@ -8,7 +8,9 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -209,7 +211,22 @@ func (h *Handler) listPayments(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, apierr.ErrUnauthorized)
 		return
 	}
-	payments, err := h.svc.ListPayments(r.Context(), userID)
+
+	limit := 10
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if n, err := strconv.Atoi(l); err == nil && n > 0 && n <= 100 {
+			limit = n
+		}
+	}
+
+	var cursor *time.Time
+	if c := r.URL.Query().Get("cursor"); c != "" {
+		if t, err := time.Parse(time.RFC3339Nano, c); err == nil {
+			cursor = &t
+		}
+	}
+
+	payments, hasMore, err := h.svc.ListPayments(r.Context(), userID, limit, cursor)
 	if err != nil {
 		response.Error(w, err)
 		return
@@ -217,7 +234,17 @@ func (h *Handler) listPayments(w http.ResponseWriter, r *http.Request) {
 	if payments == nil {
 		payments = []BillingPayment{}
 	}
-	response.OK(w, payments)
+
+	var nextCursor string
+	if hasMore && len(payments) > 0 {
+		nextCursor = payments[len(payments)-1].CreatedAt.Format(time.RFC3339Nano)
+	}
+
+	response.OK(w, PaymentsPage{
+		Payments:   payments,
+		HasMore:    hasMore,
+		NextCursor: nextCursor,
+	})
 }
 
 // ── Webhook — Adullam ────────────────────────────────────────────────────────

@@ -118,6 +118,12 @@ type StorageAddon struct {
 	UpdatedAt     time.Time `json:"updated_at"`
 }
 
+type PaymentsPage struct {
+	Payments   []BillingPayment `json:"payments"`
+	HasMore    bool             `json:"has_more"`
+	NextCursor string           `json:"next_cursor"`
+}
+
 type AddonCheckoutRequest struct {
 	PackageID   string `json:"package_id"`
 	Channel     string `json:"channel"`

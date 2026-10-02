@@ -301,8 +301,8 @@ func (s *Service) HandleSaspayWebhook(ctx context.Context, gatewayPaymentID stri
 	return nil
 }
 
-func (s *Service) ListPayments(ctx context.Context, userID uuid.UUID) ([]BillingPayment, error) {
-	return s.store.ListUserPayments(ctx, userID)
+func (s *Service) ListPayments(ctx context.Context, userID uuid.UUID, limit int, cursor *time.Time) ([]BillingPayment, bool, error) {
+	return s.store.ListUserPayments(ctx, userID, limit, cursor)
 }
 
 func (s *Service) GetUserFileSizeLimit(ctx context.Context, userID uuid.UUID) (int64, error) {

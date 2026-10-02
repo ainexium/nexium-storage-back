@@ -26,7 +26,7 @@ type Store interface {
 	GetPaymentByGatewayID(ctx context.Context, gatewayID, provider string) (*BillingPayment, error)
 	UpdatePaymentStatus(ctx context.Context, id uuid.UUID, status, adullamID string) error
 	SetPaymentRedirectURL(ctx context.Context, id uuid.UUID, url string) error
-	ListUserPayments(ctx context.Context, userID uuid.UUID) ([]BillingPayment, error)
+	ListUserPayments(ctx context.Context, userID uuid.UUID, limit int, cursor *time.Time) ([]BillingPayment, bool, error)
 	GetChannelInfo(ctx context.Context, slug string) (active bool, provider string, err error)
 	// Add-ons
 	CreateAddon(ctx context.Context, a *StorageAddon) error
@@ -253,11 +253,23 @@ func (s *pgStore) SetPaymentRedirectURL(ctx context.Context, id uuid.UUID, url s
 	return err
 }
 
-func (s *pgStore) ListUserPayments(ctx context.Context, userID uuid.UUID) ([]BillingPayment, error) {
-	rows, err := s.db.Query(ctx,
-		paymentSelectJoin+` WHERE bp.user_id = $1 ORDER BY bp.created_at DESC LIMIT 20`, userID)
+func (s *pgStore) ListUserPayments(ctx context.Context, userID uuid.UUID, limit int, cursor *time.Time) ([]BillingPayment, bool, error) {
+	var (
+		rows pgx.Rows
+		err  error
+	)
+	fetch := limit + 1
+	if cursor != nil {
+		rows, err = s.db.Query(ctx,
+			paymentSelectJoin+` WHERE bp.user_id = $1 AND bp.created_at < $2 ORDER BY bp.created_at DESC LIMIT $3`,
+			userID, cursor, fetch)
+	} else {
+		rows, err = s.db.Query(ctx,
+			paymentSelectJoin+` WHERE bp.user_id = $1 ORDER BY bp.created_at DESC LIMIT $2`,
+			userID, fetch)
+	}
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	defer rows.Close()
 	var payments []BillingPayment
@@ -270,12 +282,19 @@ func (s *pgStore) ListUserPayments(ctx context.Context, userID uuid.UUID) ([]Bil
 			&p.CreatedAt, &p.UpdatedAt,
 			&plan.ID, &plan.Name, &plan.Slug, &plan.StorageBytes, &plan.PriceXOF, &plan.MaxProjects, &plan.MaxFileBytes, &plan.AddonsEnabled, &plan.IsActive,
 		); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		p.Plan = &plan
 		payments = append(payments, p)
 	}
-	return payments, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	hasMore := len(payments) > limit
+	if hasMore {
+		payments = payments[:limit]
+	}
+	return payments, hasMore, nil
 }
 
 func (s *pgStore) GetChannelInfo(ctx context.Context, slug string) (bool, string, error) {
