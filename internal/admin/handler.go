@@ -1,10 +1,12 @@
 package admin
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -482,13 +484,10 @@ func (h *Handler) updateBillingCountry(w http.ResponseWriter, r *http.Request) {
 
 // ── Billing — Refresh exchange rates ─────────────────────────────────────────
 
-func (h *Handler) refreshRates(w http.ResponseWriter, r *http.Request) {
-	actorID, _ := mw.GetUserID(r)
-
+func (h *Handler) doRefreshRates(ctx context.Context) (int, error) {
 	resp, err := http.Get("https://api.exchangerate-api.com/v4/latest/XOF") //nolint:noctx
 	if err != nil {
-		response.Error(w, apierr.ErrBadRequest("exchange rate API unreachable"))
-		return
+		return 0, fmt.Errorf("exchange rate API unreachable: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -496,20 +495,16 @@ func (h *Handler) refreshRates(w http.ResponseWriter, r *http.Request) {
 		Rates map[string]float64 `json:"rates"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		response.Error(w, apierr.ErrBadRequest("invalid exchange rate response"))
-		return
+		return 0, fmt.Errorf("invalid exchange rate response: %w", err)
 	}
 	if len(result.Rates) == 0 {
-		response.Error(w, apierr.ErrBadRequest("empty rates from exchange API"))
-		return
+		return 0, fmt.Errorf("empty rates from exchange API")
 	}
 
-	// Fetch all countries that need conversion (non-XOF, non-XAF)
-	rows, err := h.db.Query(r.Context(),
+	rows, err := h.db.Query(ctx,
 		`SELECT code, currency_code FROM billing_countries WHERE currency_code NOT IN ('XOF','XAF')`)
 	if err != nil {
-		response.Error(w, err)
-		return
+		return 0, err
 	}
 	defer rows.Close()
 	type entry struct{ code, currency string }
@@ -517,8 +512,7 @@ func (h *Handler) refreshRates(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var e entry
 		if err := rows.Scan(&e.code, &e.currency); err != nil {
-			response.Error(w, err)
-			return
+			return 0, err
 		}
 		entries = append(entries, e)
 	}
@@ -531,15 +525,47 @@ func (h *Handler) refreshRates(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		// local_per_xof = local currency units per 1 XOF (multiply formula: local = xof * local_per_xof)
-		if _, err := h.db.Exec(r.Context(),
+		if _, err := h.db.Exec(ctx,
 			`UPDATE billing_countries SET local_per_xof=$2 WHERE code=$1`, e.code, rateLocalPerXOF,
 		); err == nil {
 			updated++
 		}
 	}
+	return updated, nil
+}
 
+func (h *Handler) refreshRates(w http.ResponseWriter, r *http.Request) {
+	actorID, _ := mw.GetUserID(r)
+	updated, err := h.doRefreshRates(r.Context())
+	if err != nil {
+		response.Error(w, apierr.ErrBadRequest(err.Error()))
+		return
+	}
 	h.log.Async(actorID, "admin.billing.rates.refresh", "updated", fmt.Sprintf("%d countries", updated))
 	response.OK(w, map[string]any{"updated": updated})
+}
+
+// StartRateSync refreshes exchange rates on startup then every 24 h.
+func (h *Handler) StartRateSync(ctx context.Context) {
+	do := func() {
+		n, err := h.doRefreshRates(ctx)
+		if err != nil {
+			log.Printf("[ratesync] error: %v", err)
+		} else {
+			log.Printf("[ratesync] updated %d countries", n)
+		}
+	}
+	do()
+	ticker := time.NewTicker(24 * time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			do()
+		case <-ctx.Done():
+			return
+		}
+	}
 }
 
 // ── Billing — Channels ───────────────────────────────────────────────────────

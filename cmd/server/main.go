@@ -218,6 +218,9 @@ func main() {
 	expiryJob := expiry.New(db, r2, mail, "NEXIUM Storage")
 	go expiryJob.Start(context.Background())
 
+	// Sync des taux de change au démarrage puis toutes les 24h
+	go adminHandler.StartRateSync(context.Background())
+
 	addr := fmt.Sprintf(":%s", cfg.Port)
 	log.Printf("NEXIUM Storage API listening on %s", addr)
 	if err := http.ListenAndServe(addr, r); err != nil {
