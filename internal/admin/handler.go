@@ -530,10 +530,9 @@ func (h *Handler) refreshRates(w http.ResponseWriter, r *http.Request) {
 		if !ok || rateLocalPerXOF == 0 {
 			continue
 		}
-		// local_per_xof = XOF per 1 local unit = 1 / (local per XOF)
-		xofPerLocal := 1.0 / rateLocalPerXOF
+		// local_per_xof = local currency units per 1 XOF (multiply formula: local = xof * local_per_xof)
 		if _, err := h.db.Exec(r.Context(),
-			`UPDATE billing_countries SET local_per_xof=$2 WHERE code=$1`, e.code, xofPerLocal,
+			`UPDATE billing_countries SET local_per_xof=$2 WHERE code=$1`, e.code, rateLocalPerXOF,
 		); err == nil {
 			updated++
 		}
