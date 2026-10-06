@@ -186,10 +186,11 @@ func main() {
 		r.Mount("/api/v1/buckets/{bucketID}/files", fileHandler.BucketRoutes())
 	})
 
-	// External API routes authenticated via API key — 600 req/min per project
+	// External API routes authenticated via API key — 600 req/min per project + monthly quota
 	r.Group(func(r chi.Router) {
 		r.Use(mw.AuthenticateAPIKey(db))
 		r.Use(mw.RateLimitPerProject(600, time.Minute))
+		r.Use(mw.EnforceAPIQuota(db))
 		r.Use(mw.TrackActivity(db))
 		r.Mount("/api/v1/ext/buckets/{bucketID}/files", fileHandler.ExtBucketRoutes())
 		r.Mount("/api/v1/ext/files", fileHandler.ExtFileRoutes())
