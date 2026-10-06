@@ -392,22 +392,34 @@ func (h *Handler) updatePlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.PriceXOF != nil {
-		h.db.Exec(r.Context(), `UPDATE plans SET price_xof=$2, updated_at=now() WHERE id=$1`, id, *req.PriceXOF)
+		if _, err := h.db.Exec(r.Context(), `UPDATE plans SET price_xof=$2, updated_at=now() WHERE id=$1`, id, *req.PriceXOF); err != nil {
+			response.Error(w, err); return
+		}
 	}
 	if req.StorageBytes != nil {
-		h.db.Exec(r.Context(), `UPDATE plans SET storage_bytes=$2, updated_at=now() WHERE id=$1`, id, *req.StorageBytes)
+		if _, err := h.db.Exec(r.Context(), `UPDATE plans SET storage_bytes=$2, updated_at=now() WHERE id=$1`, id, *req.StorageBytes); err != nil {
+			response.Error(w, err); return
+		}
 	}
 	if req.MaxFileBytes != nil {
-		h.db.Exec(r.Context(), `UPDATE plans SET max_file_bytes=$2, updated_at=now() WHERE id=$1`, id, *req.MaxFileBytes)
+		if _, err := h.db.Exec(r.Context(), `UPDATE plans SET max_file_bytes=$2, updated_at=now() WHERE id=$1`, id, *req.MaxFileBytes); err != nil {
+			response.Error(w, err); return
+		}
 	}
 	if req.MaxProjects != nil {
-		h.db.Exec(r.Context(), `UPDATE plans SET max_projects=$2, updated_at=now() WHERE id=$1`, id, *req.MaxProjects)
+		if _, err := h.db.Exec(r.Context(), `UPDATE plans SET max_projects=$2, updated_at=now() WHERE id=$1`, id, *req.MaxProjects); err != nil {
+			response.Error(w, err); return
+		}
 	}
 	if req.AddonsEnabled != nil {
-		h.db.Exec(r.Context(), `UPDATE plans SET addons_enabled=$2, updated_at=now() WHERE id=$1`, id, *req.AddonsEnabled)
+		if _, err := h.db.Exec(r.Context(), `UPDATE plans SET addons_enabled=$2, updated_at=now() WHERE id=$1`, id, *req.AddonsEnabled); err != nil {
+			response.Error(w, err); return
+		}
 	}
 	if req.IsActive != nil {
-		h.db.Exec(r.Context(), `UPDATE plans SET is_active=$2, updated_at=now() WHERE id=$1`, id, *req.IsActive)
+		if _, err := h.db.Exec(r.Context(), `UPDATE plans SET is_active=$2, updated_at=now() WHERE id=$1`, id, *req.IsActive); err != nil {
+			response.Error(w, err); return
+		}
 	}
 	h.log.Async(actorID, "admin.billing.plan.update", "plan", id.String())
 	response.NoContent(w)
