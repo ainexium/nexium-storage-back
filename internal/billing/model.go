@@ -18,15 +18,16 @@ type Country struct {
 }
 
 type Plan struct {
-	ID            uuid.UUID `json:"id"`
-	Name          string    `json:"name"`
-	Slug          string    `json:"slug"`
-	StorageBytes  int64     `json:"storage_bytes"`
-	PriceXOF      int       `json:"price_xof"`
-	MaxProjects   int       `json:"max_projects"`
-	MaxFileBytes  int64     `json:"max_file_bytes"`
-	AddonsEnabled bool      `json:"addons_enabled"`
-	IsActive      bool      `json:"is_active"`
+	ID                     uuid.UUID `json:"id"`
+	Name                   string    `json:"name"`
+	Slug                   string    `json:"slug"`
+	StorageBytes           int64     `json:"storage_bytes"`
+	PriceXOF               int       `json:"price_xof"`
+	MaxProjects            int       `json:"max_projects"`
+	MaxFileBytes           int64     `json:"max_file_bytes"`
+	MaxMonthlyAPIRequests  *int64    `json:"max_monthly_api_requests"`
+	AddonsEnabled          bool      `json:"addons_enabled"`
+	IsActive               bool      `json:"is_active"`
 }
 
 type Subscription struct {

@@ -93,7 +93,7 @@ func (s *pgStore) UpdateCountry(ctx context.Context, code string, isActive bool,
 
 func (s *pgStore) ListPlans(ctx context.Context) ([]Plan, error) {
 	rows, err := s.db.Query(ctx,
-		`SELECT id, name, slug, storage_bytes, price_xof, max_projects, max_file_bytes, addons_enabled, is_active
+		`SELECT id, name, slug, storage_bytes, price_xof, max_projects, max_file_bytes, max_monthly_api_requests, addons_enabled, is_active
 		 FROM plans WHERE is_active = true ORDER BY price_xof ASC`)
 	if err != nil {
 		return nil, err
@@ -102,7 +102,7 @@ func (s *pgStore) ListPlans(ctx context.Context) ([]Plan, error) {
 	var plans []Plan
 	for rows.Next() {
 		var p Plan
-		if err := rows.Scan(&p.ID, &p.Name, &p.Slug, &p.StorageBytes, &p.PriceXOF, &p.MaxProjects, &p.MaxFileBytes, &p.AddonsEnabled, &p.IsActive); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Slug, &p.StorageBytes, &p.PriceXOF, &p.MaxProjects, &p.MaxFileBytes, &p.MaxMonthlyAPIRequests, &p.AddonsEnabled, &p.IsActive); err != nil {
 			return nil, err
 		}
 		plans = append(plans, p)
@@ -113,8 +113,8 @@ func (s *pgStore) ListPlans(ctx context.Context) ([]Plan, error) {
 func (s *pgStore) GetPlanByID(ctx context.Context, id uuid.UUID) (*Plan, error) {
 	p := &Plan{}
 	err := s.db.QueryRow(ctx,
-		`SELECT id, name, slug, storage_bytes, price_xof, max_projects, max_file_bytes, addons_enabled, is_active FROM plans WHERE id = $1`, id,
-	).Scan(&p.ID, &p.Name, &p.Slug, &p.StorageBytes, &p.PriceXOF, &p.MaxProjects, &p.MaxFileBytes, &p.AddonsEnabled, &p.IsActive)
+		`SELECT id, name, slug, storage_bytes, price_xof, max_projects, max_file_bytes, max_monthly_api_requests, addons_enabled, is_active FROM plans WHERE id = $1`, id,
+	).Scan(&p.ID, &p.Name, &p.Slug, &p.StorageBytes, &p.PriceXOF, &p.MaxProjects, &p.MaxFileBytes, &p.MaxMonthlyAPIRequests, &p.AddonsEnabled, &p.IsActive)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -124,8 +124,8 @@ func (s *pgStore) GetPlanByID(ctx context.Context, id uuid.UUID) (*Plan, error) 
 func (s *pgStore) GetPlanBySlug(ctx context.Context, slug string) (*Plan, error) {
 	p := &Plan{}
 	err := s.db.QueryRow(ctx,
-		`SELECT id, name, slug, storage_bytes, price_xof, max_projects, max_file_bytes, addons_enabled, is_active FROM plans WHERE slug = $1`, slug,
-	).Scan(&p.ID, &p.Name, &p.Slug, &p.StorageBytes, &p.PriceXOF, &p.MaxProjects, &p.MaxFileBytes, &p.AddonsEnabled, &p.IsActive)
+		`SELECT id, name, slug, storage_bytes, price_xof, max_projects, max_file_bytes, max_monthly_api_requests, addons_enabled, is_active FROM plans WHERE slug = $1`, slug,
+	).Scan(&p.ID, &p.Name, &p.Slug, &p.StorageBytes, &p.PriceXOF, &p.MaxProjects, &p.MaxFileBytes, &p.MaxMonthlyAPIRequests, &p.AddonsEnabled, &p.IsActive)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -140,13 +140,13 @@ func (s *pgStore) GetSubscription(ctx context.Context, userID uuid.UUID) (*Subsc
 	err := s.db.QueryRow(ctx,
 		`SELECT s.id, s.user_id, s.plan_id, s.status,
 		        s.current_period_start, s.current_period_end, s.created_at, s.updated_at,
-		        p.id, p.name, p.slug, p.storage_bytes, p.price_xof, p.max_projects, p.max_file_bytes, p.addons_enabled, p.is_active
+		        p.id, p.name, p.slug, p.storage_bytes, p.price_xof, p.max_projects, p.max_file_bytes, p.max_monthly_api_requests, p.addons_enabled, p.is_active
 		 FROM subscriptions s JOIN plans p ON p.id = s.plan_id
 		 WHERE s.user_id = $1`, userID,
 	).Scan(
 		&sub.ID, &sub.UserID, &sub.PlanID, &sub.Status,
 		&sub.CurrentPeriodStart, &sub.CurrentPeriodEnd, &sub.CreatedAt, &sub.UpdatedAt,
-		&plan.ID, &plan.Name, &plan.Slug, &plan.StorageBytes, &plan.PriceXOF, &plan.MaxProjects, &plan.MaxFileBytes, &plan.AddonsEnabled, &plan.IsActive,
+		&plan.ID, &plan.Name, &plan.Slug, &plan.StorageBytes, &plan.PriceXOF, &plan.MaxProjects, &plan.MaxFileBytes, &plan.MaxMonthlyAPIRequests, &plan.AddonsEnabled, &plan.IsActive,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
@@ -205,7 +205,7 @@ func scanPayment(row pgx.Row) (*BillingPayment, error) {
 		&p.ID, &p.UserID, &p.PlanID, &p.AdullamID,
 		&p.AmountXOF, &p.FeeXOF, &p.Status, &p.Channel, &p.Phone, &p.RedirectURL, &p.Provider, &p.CountryCode,
 		&p.CreatedAt, &p.UpdatedAt,
-		&plan.ID, &plan.Name, &plan.Slug, &plan.StorageBytes, &plan.PriceXOF, &plan.MaxProjects, &plan.MaxFileBytes, &plan.AddonsEnabled, &plan.IsActive,
+		&plan.ID, &plan.Name, &plan.Slug, &plan.StorageBytes, &plan.PriceXOF, &plan.MaxProjects, &plan.MaxFileBytes, &plan.MaxMonthlyAPIRequests, &plan.AddonsEnabled, &plan.IsActive,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
@@ -222,7 +222,7 @@ const paymentSelectJoin = `
 	       bp.amount_xof, COALESCE(bp.fee_xof, 0), bp.status, bp.channel, bp.phone, COALESCE(bp.redirect_url, ''),
 	       COALESCE(bp.provider,'adullam'), COALESCE(bp.country_code,'CI'),
 	       bp.created_at, bp.updated_at,
-	       pl.id, pl.name, pl.slug, pl.storage_bytes, pl.price_xof, pl.max_projects, pl.max_file_bytes, pl.addons_enabled, pl.is_active
+	       pl.id, pl.name, pl.slug, pl.storage_bytes, pl.price_xof, pl.max_projects, pl.max_file_bytes, pl.max_monthly_api_requests, pl.addons_enabled, pl.is_active
 	FROM billing_payments bp JOIN plans pl ON pl.id = bp.plan_id`
 
 func (s *pgStore) GetPayment(ctx context.Context, id uuid.UUID) (*BillingPayment, error) {
