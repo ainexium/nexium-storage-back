@@ -87,6 +87,7 @@ func (h *Handler) Routes(superAdminMW func(http.Handler) http.Handler) chi.Route
 		r.Patch("/billing/plans/{id}", h.updatePlan)
 		r.Get("/billing/countries", h.listBillingCountries)
 		r.Patch("/billing/countries/{code}", h.updateBillingCountry)
+		r.Post("/billing/refresh-rates", h.refreshRates)
 		r.Get("/billing/channels", h.listAllChannels)
 		r.Post("/billing/channels", h.createChannel)
 		r.Patch("/billing/channels/{id}", h.updateChannel)
@@ -477,6 +478,69 @@ func (h *Handler) updateBillingCountry(w http.ResponseWriter, r *http.Request) {
 		h.db.Exec(r.Context(), `UPDATE billing_countries SET local_per_xof=$2 WHERE code=$1`, code, *req.LocalPerXOF)
 	}
 	response.NoContent(w)
+}
+
+// ── Billing — Refresh exchange rates ─────────────────────────────────────────
+
+func (h *Handler) refreshRates(w http.ResponseWriter, r *http.Request) {
+	actorID, _ := mw.GetUserID(r)
+
+	resp, err := http.Get("https://api.exchangerate-api.com/v4/latest/XOF") //nolint:noctx
+	if err != nil {
+		response.Error(w, apierr.ErrBadRequest("exchange rate API unreachable"))
+		return
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		Rates map[string]float64 `json:"rates"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		response.Error(w, apierr.ErrBadRequest("invalid exchange rate response"))
+		return
+	}
+	if len(result.Rates) == 0 {
+		response.Error(w, apierr.ErrBadRequest("empty rates from exchange API"))
+		return
+	}
+
+	// Fetch all countries that need conversion (non-XOF, non-XAF)
+	rows, err := h.db.Query(r.Context(),
+		`SELECT code, currency_code FROM billing_countries WHERE currency_code NOT IN ('XOF','XAF')`)
+	if err != nil {
+		response.Error(w, err)
+		return
+	}
+	defer rows.Close()
+	type entry struct{ code, currency string }
+	var entries []entry
+	for rows.Next() {
+		var e entry
+		if err := rows.Scan(&e.code, &e.currency); err != nil {
+			response.Error(w, err)
+			return
+		}
+		entries = append(entries, e)
+	}
+	rows.Close()
+
+	updated := 0
+	for _, e := range entries {
+		rateLocalPerXOF, ok := result.Rates[e.currency]
+		if !ok || rateLocalPerXOF == 0 {
+			continue
+		}
+		// local_per_xof = XOF per 1 local unit = 1 / (local per XOF)
+		xofPerLocal := 1.0 / rateLocalPerXOF
+		if _, err := h.db.Exec(r.Context(),
+			`UPDATE billing_countries SET local_per_xof=$2 WHERE code=$1`, e.code, xofPerLocal,
+		); err == nil {
+			updated++
+		}
+	}
+
+	h.log.Async(actorID, "admin.billing.rates.refresh", "updated", fmt.Sprintf("%d countries", updated))
+	response.OK(w, map[string]any{"updated": updated})
 }
 
 // ── Billing — Channels ───────────────────────────────────────────────────────
