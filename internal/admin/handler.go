@@ -393,32 +393,32 @@ func (h *Handler) updatePlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.PriceXOF != nil {
-		if _, err := h.db.Exec(r.Context(), `UPDATE plans SET price_xof=$2, updated_at=now() WHERE id=$1`, id, *req.PriceXOF); err != nil {
+		if _, err := h.db.Exec(r.Context(), `UPDATE plans SET price_xof=$2 WHERE id=$1`, id, *req.PriceXOF); err != nil {
 			response.Error(w, err); return
 		}
 	}
 	if req.StorageBytes != nil {
-		if _, err := h.db.Exec(r.Context(), `UPDATE plans SET storage_bytes=$2, updated_at=now() WHERE id=$1`, id, *req.StorageBytes); err != nil {
+		if _, err := h.db.Exec(r.Context(), `UPDATE plans SET storage_bytes=$2 WHERE id=$1`, id, *req.StorageBytes); err != nil {
 			response.Error(w, err); return
 		}
 	}
 	if req.MaxFileBytes != nil {
-		if _, err := h.db.Exec(r.Context(), `UPDATE plans SET max_file_bytes=$2, updated_at=now() WHERE id=$1`, id, *req.MaxFileBytes); err != nil {
+		if _, err := h.db.Exec(r.Context(), `UPDATE plans SET max_file_bytes=$2 WHERE id=$1`, id, *req.MaxFileBytes); err != nil {
 			response.Error(w, err); return
 		}
 	}
 	if req.MaxProjects != nil {
-		if _, err := h.db.Exec(r.Context(), `UPDATE plans SET max_projects=$2, updated_at=now() WHERE id=$1`, id, *req.MaxProjects); err != nil {
+		if _, err := h.db.Exec(r.Context(), `UPDATE plans SET max_projects=$2 WHERE id=$1`, id, *req.MaxProjects); err != nil {
 			response.Error(w, err); return
 		}
 	}
 	if req.AddonsEnabled != nil {
-		if _, err := h.db.Exec(r.Context(), `UPDATE plans SET addons_enabled=$2, updated_at=now() WHERE id=$1`, id, *req.AddonsEnabled); err != nil {
+		if _, err := h.db.Exec(r.Context(), `UPDATE plans SET addons_enabled=$2 WHERE id=$1`, id, *req.AddonsEnabled); err != nil {
 			response.Error(w, err); return
 		}
 	}
 	if req.IsActive != nil {
-		if _, err := h.db.Exec(r.Context(), `UPDATE plans SET is_active=$2, updated_at=now() WHERE id=$1`, id, *req.IsActive); err != nil {
+		if _, err := h.db.Exec(r.Context(), `UPDATE plans SET is_active=$2 WHERE id=$1`, id, *req.IsActive); err != nil {
 			response.Error(w, err); return
 		}
 	}
