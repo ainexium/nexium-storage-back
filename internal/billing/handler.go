@@ -43,6 +43,7 @@ func (h *Handler) AuthRoutes() chi.Router {
 	r.Post("/addons/checkout", h.addonCheckout)
 	r.Get("/addons", h.listAddons)
 	r.Get("/addons/{addonID}", h.getAddonStatus)
+	r.Get("/consumption", h.getConsumption)
 	return r
 }
 
@@ -405,4 +406,51 @@ func (h *Handler) verifySignature(body []byte, sigHeader, secret string) bool {
 	mac.Write(body)
 	actual := hex.EncodeToString(mac.Sum(nil))
 	return hmac.Equal([]byte(actual), []byte(expected))
+}
+
+// ── Consumption ───────────────────────────────────────────────────────────────
+
+func (h *Handler) getConsumption(w http.ResponseWriter, r *http.Request) {
+	userID, _ := mw.GetUserID(r)
+	month := time.Now().UTC().Format("2006-01")
+
+	var storageUsed, storageQuota int64
+	var apiUsed int64
+	var apiLimit *int64
+
+	err := h.db.QueryRow(r.Context(), `
+		SELECT
+		    COALESCE((
+		        SELECT SUM(f.size_bytes)
+		        FROM files f
+		        JOIN buckets b ON b.id = f.bucket_id
+		        JOIN projects p ON p.id = b.project_id
+		        WHERE p.user_id = $1
+		    ), 0),
+		    COALESCE(u.storage_quota_bytes, 0),
+		    COALESCE((
+		        SELECT arc.count FROM api_request_counts arc
+		        WHERE arc.user_id = $1 AND arc.month = $2
+		    ), 0),
+		    CASE WHEN s.id IS NOT NULL THEN pl.max_monthly_api_requests
+		         ELSE fp.max_monthly_api_requests
+		    END
+		FROM users u
+		CROSS JOIN (SELECT max_monthly_api_requests FROM plans WHERE slug = 'free' LIMIT 1) fp
+		LEFT JOIN subscriptions s ON s.user_id = u.id AND s.status = 'active'
+		LEFT JOIN plans pl ON pl.id = s.plan_id
+		WHERE u.id = $1
+	`, userID, month).Scan(&storageUsed, &storageQuota, &apiUsed, &apiLimit)
+	if err != nil {
+		response.Error(w, err)
+		return
+	}
+
+	response.OK(w, map[string]any{
+		"storage_used_bytes":  storageUsed,
+		"storage_quota_bytes": storageQuota,
+		"api_requests_used":   apiUsed,
+		"api_requests_limit":  apiLimit,
+		"month":               month,
+	})
 }
