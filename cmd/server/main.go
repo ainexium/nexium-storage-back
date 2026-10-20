@@ -131,7 +131,7 @@ func main() {
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   []string{"http://localhost:3000", "https://*.nexium.ai", "https://*.nexiumai.io", "https://nexiumai.io"},
 		AllowedMethods:   []string{"GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "x-nexium-locale"},
 		AllowCredentials: true,
 		MaxAge:           300,
 	}))
