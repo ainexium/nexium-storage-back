@@ -20,6 +20,7 @@ func NewHandler(svc Service, log *logs.Store) *Handler { return &Handler{svc, lo
 
 func (h *Handler) Routes(jwtSecret string) chi.Router {
 	r := chi.NewRouter()
+	r.Use(mw.WithLocale())
 	r.Post("/register", h.register)
 	r.Post("/login", h.login)
 	r.Post("/refresh", h.refresh)

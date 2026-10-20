@@ -21,7 +21,28 @@ const (
 	UserIDKey           contextKey = "user_id"
 	ProjectIDKey        contextKey = "project_id"
 	AllowedBucketIDsKey contextKey = "allowed_bucket_ids"
+	LocaleKey           contextKey = "locale"
 )
+
+func WithLocale() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			locale := r.Header.Get("x-nexium-locale")
+			if locale != "fr" {
+				locale = "en"
+			}
+			ctx := context.WithValue(r.Context(), LocaleKey, locale)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
+func GetLocale(ctx context.Context) string {
+	if locale, ok := ctx.Value(LocaleKey).(string); ok && locale != "" {
+		return locale
+	}
+	return "en"
+}
 
 func Authenticate(jwtSecret string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
